@@ -2,17 +2,19 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Build & Run
+## Build & Install
 
 ```bash
-go build -o godu ./cmd/godu          # build binary
-go install ./cmd/godu                # install to ~/go/bin
-go test ./...                        # run all tests
-golangci-lint run ./...              # lint
-make release                         # cross-compile darwin/linux arm64/amd64
+brew tap sadopc/tap && brew install godu   # install via Homebrew
+go build -o godu ./cmd/godu               # build binary locally
+go test ./...                              # run all tests
+golangci-lint run ./...                    # lint
+make release                               # cross-compile darwin/linux arm64/amd64
 ```
 
 Version is injected at build time via `-ldflags "-X main.version=$(VERSION)"` using git describe.
+
+Homebrew tap repo: `sadopc/homebrew-tap`. Formula at `Formula/godu.rb` — update SHA256 hashes and version when cutting a new release.
 
 ## Architecture
 
