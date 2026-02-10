@@ -1,0 +1,27 @@
+# Binary
+/godu
+/godu-*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Test/debug
+*.test
+*.prof
+*.out
+coverage.txt
+
+# Export files
+godu-export.json
+
+# Original screenshots (PNGs are in screenshots/)
+*.heic
+2-treemap.png
