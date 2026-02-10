@@ -41,7 +41,14 @@ Full keybinding reference overlay.
 
 ## Installation
 
-### From source (recommended)
+### Homebrew (macOS / Linux)
+
+```bash
+brew tap sadopc/tap
+brew install godu
+```
+
+### From source
 
 Requires **Go 1.21+**.
 
