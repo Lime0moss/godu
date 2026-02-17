@@ -125,6 +125,14 @@ func RenderFileTypes(theme style.Theme, dir *model.DirNode, useApparent bool, sh
 		lines = append(lines, "")
 	}
 
+	// Apply explicit background to every line so treemap colors don't bleed through.
+	bgStyle := lipgloss.NewStyle().
+		Background(theme.BgDark).
+		Width(width)
+	for i := range lines[:height] {
+		lines[i] = bgStyle.Render(lines[i])
+	}
+
 	return strings.Join(lines[:height], "\n")
 }
 

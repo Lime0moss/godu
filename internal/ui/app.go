@@ -176,7 +176,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.offset = 0
 		a.state = StateBrowsing
 		a.refreshSorted()
-		return a, nil
+		return a, tea.ClearScreen
 
 	case tickMsg:
 		if a.state == StateScanning {
@@ -208,7 +208,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else if len(msg.Deleted) > 0 {
 			a.statusMsg = fmt.Sprintf("Deleted %d item(s)", len(msg.Deleted))
 		}
-		return a, nil
+		return a, tea.ClearScreen
 
 	case ExportDoneMsg:
 		a.state = StateBrowsing
@@ -243,6 +243,7 @@ func (a *App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case StateHelp:
 		if key.Matches(msg, a.keys.Help) || msg.String() == "esc" {
 			a.state = StateBrowsing
+			return a, tea.ClearScreen
 		}
 		return a, nil
 
@@ -252,6 +253,7 @@ func (a *App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		if key.Matches(msg, a.keys.ConfirmNo) {
 			a.state = StateBrowsing
+			return a, tea.ClearScreen
 		}
 		return a, nil
 
@@ -270,7 +272,7 @@ func (a *App) handleBrowsingKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, a.keys.Help):
 		a.state = StateHelp
-		return a, nil
+		return a, tea.ClearScreen
 
 	case key.Matches(msg, a.keys.Up):
 		a.moveCursor(-1)
@@ -283,10 +285,13 @@ func (a *App) handleBrowsingKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, a.keys.ViewTree):
 		a.viewMode = ViewTree
+		return a, tea.ClearScreen
 	case key.Matches(msg, a.keys.ViewTreemap):
 		a.viewMode = ViewTreemap
+		return a, tea.ClearScreen
 	case key.Matches(msg, a.keys.ViewFileType):
 		a.viewMode = ViewFileType
+		return a, tea.ClearScreen
 
 	case key.Matches(msg, a.keys.SortSize):
 		a.toggleSort(model.SortBySize)
@@ -312,7 +317,11 @@ func (a *App) handleBrowsingKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, a.keys.Delete):
 		if a.viewMode == ViewTree {
-			return a, a.prepareDelete()
+			cmd := a.prepareDelete()
+			if a.state == StateConfirmDelete {
+				return a, tea.Batch(cmd, tea.ClearScreen)
+			}
+			return a, cmd
 		}
 
 	case key.Matches(msg, a.keys.Export):
@@ -324,7 +333,7 @@ func (a *App) handleBrowsingKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		a.cursor = 0
 		a.offset = 0
 		a.state = StateScanning
-		return a, tea.Batch(a.scanCmd(), a.tickCmd())
+		return a, tea.Batch(tea.ClearScreen, a.scanCmd(), a.tickCmd())
 	}
 
 	return a, nil

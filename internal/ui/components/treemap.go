@@ -20,6 +20,17 @@ type treemapItem struct {
 	size int64
 }
 
+var treemapPalette = []lipgloss.Color{
+	"#4A6FA5", // steel blue
+	"#6B8E6B", // sage green
+	"#8B6BAE", // muted purple
+	"#B5854B", // amber
+	"#5B9EA6", // teal
+	"#A6635B", // terracotta
+	"#7B8FB2", // slate blue
+	"#6BA68B", // seafoam
+}
+
 // RenderTreemap renders a squarified treemap visualization.
 func RenderTreemap(theme style.Theme, dir *model.DirNode, useApparent bool, showHidden bool, width, height int) string {
 	if dir == nil || height <= 0 || width <= 0 {
@@ -100,12 +111,7 @@ func RenderTreemap(theme style.Theme, dir *model.DirNode, useApparent bool, show
 
 		var color lipgloss.Color
 		if i < len(items) && items[i].node != nil {
-			cat := model.ClassifyFile(items[i].node.GetName())
-			if items[i].node.IsDir() {
-				color = theme.Accent
-			} else {
-				color = lipgloss.Color(model.CategoryColor(cat))
-			}
+			color = treemapPalette[i%len(treemapPalette)]
 		} else {
 			color = theme.Muted
 		}
