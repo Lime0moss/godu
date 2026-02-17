@@ -138,6 +138,8 @@ func parseDir(data json.RawMessage, parent *model.DirNode) (*model.DirNode, erro
 				Parent: dir,
 			}
 			dir.AddChild(fileNode)
+		} else {
+			return nil, fmt.Errorf("unexpected child element at index %d: expected array or object", i)
 		}
 	}
 

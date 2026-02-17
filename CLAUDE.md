@@ -8,6 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 go build -o godu ./cmd/godu                    # build binary
 make build                                      # build with version ldflags
 make run                                        # build + run on current dir
+make install                                    # install to GOPATH/bin
 go test ./...                                   # run all tests
 go test ./internal/scanner/...                  # run single package tests
 go test -run TestContextCancellation ./internal/scanner/...  # run single test
@@ -17,9 +18,9 @@ make release                                    # cross-compile darwin/linux arm
 
 Requires **Go 1.25.7+**. Version is injected at build time via `-ldflags "-X main.version=$(VERSION)"` using git describe.
 
-Test files exist in `internal/scanner/`, `internal/ops/`, and `internal/ui/components/`. Tests use `t.TempDir()` for filesystem operations.
+Test files exist in `cmd/godu/` (E2E), `internal/scanner/`, `internal/ops/`, and `internal/ui/components/`. Tests use `t.TempDir()` for filesystem operations. E2E tests in `cmd/godu/main_e2e_test.go` use a helper-process pattern to test CLI flags, export/import round-trips, and error handling.
 
-Homebrew tap repo: `sadopc/homebrew-tap`. Formula at `Formula/godu.rb` — update SHA256 hashes and version when cutting a new release.
+Homebrew tap repo: `sadopc/homebrew-tap` (installed via `brew tap sadopc/tap`). Formula at `Formula/godu.rb` — update SHA256 hashes and version when cutting a new release.
 
 ## Architecture
 
@@ -46,6 +47,10 @@ Homebrew tap repo: `sadopc/homebrew-tap`. Formula at `Formula/godu.rb` — updat
 ### Scanner defaults
 
 `ScanOptions`: `ShowHidden: true`, `FollowSymlinks: false`, `DisableGC: false`, `Concurrency: 0` (auto = `3 * GOMAXPROCS`). Each `DirNode` has its own `sync.RWMutex` for child list — no global lock contention during parallel phase.
+
+## CLI flags
+
+All scanner options are CLI-exposed: `--hidden`/`--no-hidden`, `--no-gc`, `--exclude`, `--follow-symlinks`, `-j` (concurrency). Export/import: `--export`, `--import`. See `godu --help`.
 
 ## Three execution modes
 

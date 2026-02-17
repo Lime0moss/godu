@@ -214,6 +214,11 @@ func (s *ParallelScanner) scanDir(
 			continue
 		}
 
+		// Skip hidden files/dirs when ShowHidden is false
+		if !opts.ShowHidden && len(name) > 0 && name[0] == '.' {
+			continue
+		}
+
 		fullPath := filepath.Join(dirPath, name)
 
 		if entry.IsDir() {
@@ -247,11 +252,31 @@ func (s *ParallelScanner) scanDir(
 			resolvedPath, err := filepath.EvalSymlinks(fullPath)
 			if err != nil {
 				errCount.Add(1)
+				// Add a placeholder so broken symlinks are visible
+				fileNode := &model.FileNode{
+					Name:   name,
+					Size:   0,
+					Usage:  0,
+					Flag:   model.FlagSymlink | model.FlagError,
+					Parent: parent,
+				}
+				parent.AddChild(fileNode)
+				filesScanned.Add(1)
 				continue
 			}
 			targetInfo, err := os.Stat(resolvedPath)
 			if err != nil {
 				errCount.Add(1)
+				// Add a placeholder so broken symlinks are visible
+				fileNode := &model.FileNode{
+					Name:   name,
+					Size:   0,
+					Usage:  0,
+					Flag:   model.FlagSymlink | model.FlagError,
+					Parent: parent,
+				}
+				parent.AddChild(fileNode)
+				filesScanned.Add(1)
 				continue
 			}
 			if targetInfo.IsDir() {
@@ -347,10 +372,11 @@ func (s *ParallelScanner) scanDir(
 				inode = stat.Ino
 				diskUsage = int64(stat.Blocks) * 512 // blocks are 512-byte units
 
-				// Hardlink detection
-				if stat.Nlink > 1 {
+				// Hardlink detection (also dedup when following symlinks to avoid double-counting)
+				if stat.Nlink > 1 || opts.FollowSymlinks {
 					inodeMu.Lock()
-					if inodeMap[inodeKey{dev: uint64(stat.Dev), ino: stat.Ino}] {
+					ik := inodeKey{dev: uint64(stat.Dev), ino: stat.Ino}
+					if inodeMap[ik] {
 						flag |= model.FlagHardlink
 						inodeMu.Unlock()
 						// Still add the node but don't count size twice
@@ -367,7 +393,7 @@ func (s *ParallelScanner) scanDir(
 						filesScanned.Add(1)
 						continue
 					}
-					inodeMap[inodeKey{dev: uint64(stat.Dev), ino: stat.Ino}] = true // uses both dev+ino to avoid cross-filesystem inode collisions
+					inodeMap[ik] = true
 					inodeMu.Unlock()
 				}
 			} else {

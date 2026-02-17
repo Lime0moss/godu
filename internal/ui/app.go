@@ -97,7 +97,8 @@ type App struct {
 	keys   KeyMap
 	layout style.Layout
 
-	errorMsg string
+	statusMsg string
+	fatalErr  error
 }
 
 func (a *App) setScanCancel(cancel context.CancelFunc) {
@@ -164,9 +165,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ScanDoneMsg:
 		if msg.Err != nil {
-			a.errorMsg = msg.Err.Error()
+			a.fatalErr = msg.Err
 			return a, tea.Quit
 		}
+		a.fatalErr = nil
 		a.root = msg.Root
 		a.currentDir = msg.Root
 		a.navStack = nil
@@ -201,18 +203,18 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.cursor = 0
 		}
 		if len(msg.Errors) > 0 {
-			a.errorMsg = fmt.Sprintf("Delete: %d failed (%v)", len(msg.Errors), msg.Errors[0])
+			a.statusMsg = fmt.Sprintf("Delete: %d failed (%v)", len(msg.Errors), msg.Errors[0])
 		} else if len(msg.Deleted) > 0 {
-			a.errorMsg = fmt.Sprintf("Deleted %d item(s)", len(msg.Deleted))
+			a.statusMsg = fmt.Sprintf("Deleted %d item(s)", len(msg.Deleted))
 		}
 		return a, nil
 
 	case ExportDoneMsg:
 		a.state = StateBrowsing
 		if msg.Err != nil {
-			a.errorMsg = fmt.Sprintf("Export failed: %v", msg.Err)
+			a.statusMsg = fmt.Sprintf("Export failed: %v", msg.Err)
 		} else {
-			a.errorMsg = fmt.Sprintf("Exported to %s", msg.Path)
+			a.statusMsg = fmt.Sprintf("Exported to %s", msg.Path)
 		}
 		return a, nil
 
@@ -260,7 +262,7 @@ func (a *App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (a *App) handleBrowsingKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	a.errorMsg = ""
+	a.statusMsg = ""
 	switch {
 	case key.Matches(msg, a.keys.Quit):
 		return a, tea.Quit
@@ -386,19 +388,9 @@ func (a *App) renderBrowsing() string {
 		ShowHidden:  a.showHidden,
 		SortField:   a.sortConfig.Field,
 		ViewMode:    int(a.viewMode),
-		ErrorMsg:    a.errorMsg,
+		ErrorMsg:    a.statusMsg,
 	}
-	for markedPath := range a.marked {
-		for _, item := range a.sortedItems {
-			if item.Path() == markedPath {
-				if a.useApparent {
-					statusInfo.MarkedSize += item.GetSize()
-				} else {
-					statusInfo.MarkedSize += item.GetUsage()
-				}
-			}
-		}
-	}
+	statusInfo.MarkedSize = a.markedSize(a.sortedItems)
 	statusBar := components.RenderStatusBar(a.theme, statusInfo, a.width)
 
 	return header + "\n" + breadcrumb + "\n" + tabBar + "\n" + content + "\n" + statusBar
@@ -556,7 +548,7 @@ func (a *App) tickCmd() tea.Cmd {
 
 func (a *App) prepareDelete() tea.Cmd {
 	if a.imported {
-		a.errorMsg = "Delete is disabled in import mode"
+		a.statusMsg = "Delete is disabled in import mode"
 		return nil
 	}
 	if a.currentDir == nil {
@@ -616,6 +608,23 @@ func (a *App) executeDelete() tea.Cmd {
 
 		return DeleteDoneMsg{Deleted: deleted, Errors: errors}
 	}
+}
+
+// FatalError returns a fatal scan/import error, if any.
+func (a *App) FatalError() error { return a.fatalErr }
+
+func (a *App) markedSize(items []model.TreeNode) int64 {
+	var total int64
+	for _, item := range items {
+		if a.marked[item.Path()] {
+			if a.useApparent {
+				total += item.GetSize()
+			} else {
+				total += item.GetUsage()
+			}
+		}
+	}
+	return total
 }
 
 func (a *App) exportCmd() tea.Cmd {
