@@ -147,6 +147,13 @@ func (s *SFTPScanner) scanWithClient(ctx context.Context, client sftpClient, rem
 			}
 		}()
 	}
+	if progress != nil {
+		// Always stop the progress goroutine before returning, including cancel/error paths.
+		defer func() {
+			close(progressDone)
+			progressWg.Wait()
+		}()
+	}
 
 	concurrency := opts.Concurrency
 	if concurrency <= 0 {
@@ -169,8 +176,6 @@ func (s *SFTPScanner) scanWithClient(ctx context.Context, client sftpClient, rem
 	root.UpdateSizeRecursiveContext(ctx)
 
 	if progress != nil {
-		close(progressDone)
-		progressWg.Wait()
 		elapsed := time.Since(startTime)
 		select {
 		case progress <- scanner.Progress{

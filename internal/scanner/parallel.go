@@ -117,6 +117,13 @@ func (s *ParallelScanner) Scan(ctx context.Context, path string, opts ScanOption
 			}
 		}()
 	}
+	if progress != nil {
+		// Always stop the progress goroutine before returning, including cancel/error paths.
+		defer func() {
+			close(progressDone)
+			progressWg.Wait()
+		}()
+	}
 
 	// Track visited directories by canonical path to avoid cycles and duplicates.
 	var visitedDirs sync.Map
@@ -135,8 +142,6 @@ func (s *ParallelScanner) Scan(ctx context.Context, path string, opts ScanOption
 
 	// Send final progress
 	if progress != nil {
-		close(progressDone)
-		progressWg.Wait()
 		elapsed := time.Since(startTime)
 		select {
 		case progress <- Progress{

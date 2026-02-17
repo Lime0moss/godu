@@ -39,13 +39,60 @@ func parseSSHTarget(target string) (string, string, error) {
 	if strings.TrimSpace(target) == "" {
 		return "", "", fmt.Errorf("remote target is required")
 	}
+	if strings.Count(target, "@") != 1 {
+		return "", "", fmt.Errorf("invalid remote target %q: expected user@host", target)
+	}
 
 	user, host, ok := strings.Cut(target, "@")
 	if !ok || user == "" || host == "" {
 		return "", "", fmt.Errorf("invalid remote target %q: expected user@host", target)
 	}
+	if strings.ContainsAny(user, " \t\n\r") || strings.ContainsAny(host, " \t\n\r") {
+		return "", "", fmt.Errorf("invalid remote target %q: spaces are not allowed", target)
+	}
+
+	// Accept bracketed IPv6 literals in user input but normalize to raw host.
+	if strings.HasPrefix(host, "[") {
+		end := strings.Index(host, "]")
+		if end == -1 {
+			return "", "", fmt.Errorf("invalid remote target %q: malformed bracketed host", target)
+		}
+		if end == 1 {
+			return "", "", fmt.Errorf("invalid remote target %q: empty host", target)
+		}
+		if end != len(host)-1 {
+			rest := host[end+1:]
+			if strings.HasPrefix(rest, ":") && isAllDigits(rest[1:]) {
+				return "", "", fmt.Errorf("remote target %q must not include :port; use --ssh-port", target)
+			}
+			return "", "", fmt.Errorf("invalid remote target %q: malformed bracketed host", target)
+		}
+		host = host[1:end]
+	} else if looksLikeHostPort(host) {
+		return "", "", fmt.Errorf("remote target %q must not include :port; use --ssh-port", target)
+	}
 
 	return user, host, nil
+}
+
+func looksLikeHostPort(host string) bool {
+	if strings.Count(host, ":") != 1 {
+		return false
+	}
+	_, port, ok := strings.Cut(host, ":")
+	return ok && isAllDigits(port)
+}
+
+func isAllDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func hostKeyCallback(host string, port int, batchMode bool) (ssh.HostKeyCallback, error) {

@@ -194,6 +194,29 @@ func TestScanWithClient_ReadDirError_SetsFlagError(t *testing.T) {
 	}
 }
 
+func TestScanWithClient_CanceledContext_WithProgressChannel_DoesNotPanic(t *testing.T) {
+	client := newFakeSFTP(map[string]fakeNode{
+		"/root":       {mode: os.ModeDir, children: []string{"a.txt"}},
+		"/root/a.txt": {mode: 0, size: 1},
+	})
+
+	s := &SFTPScanner{cfg: Config{Target: "user@host", Port: 22}, dial: fakeDial(client)}
+	progressCh := make(chan scanner.Progress, 10)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := s.Scan(ctx, "/root", scanner.ScanOptions{ShowHidden: true}, progressCh)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+
+	// If scanner goroutines are not fully stopped before return, the next ticker
+	// send can panic after this close.
+	close(progressCh)
+	time.Sleep(120 * time.Millisecond)
+}
+
 func TestScanWithClient_UsageUsesBlockEstimate(t *testing.T) {
 	client := newFakeSFTP(map[string]fakeNode{
 		"/root":          {mode: os.ModeDir, children: []string{"tiny.txt"}},

@@ -19,10 +19,15 @@ func TestParseSSHTarget(t *testing.T) {
 		wantErr bool
 	}{
 		{name: "valid", target: "alice@example.com", user: "alice", host: "example.com"},
+		{name: "valid bracketed ipv6", target: "alice@[::1]", user: "alice", host: "::1"},
 		{name: "empty", target: "", wantErr: true},
 		{name: "no at", target: "example.com", wantErr: true},
 		{name: "missing user", target: "@example.com", wantErr: true},
 		{name: "missing host", target: "alice@", wantErr: true},
+		{name: "host with port", target: "alice@example.com:2222", wantErr: true},
+		{name: "bracketed host with port", target: "alice@[::1]:2222", wantErr: true},
+		{name: "malformed bracket host", target: "alice@[::1", wantErr: true},
+		{name: "spaces rejected", target: "alice@exa mple.com", wantErr: true},
 	}
 
 	for _, tc := range tests {

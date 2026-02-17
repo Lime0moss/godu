@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/sadopc/godu/internal/model"
 )
@@ -37,6 +38,25 @@ func TestScan_CanceledContext_ReturnsError(t *testing.T) {
 	if result == nil {
 		t.Fatal("expected non-nil root even on cancellation")
 	}
+}
+
+func TestScan_CanceledContext_WithProgressChannel_DoesNotPanic(t *testing.T) {
+	root := t.TempDir()
+
+	progressCh := make(chan Progress, 10)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	s := NewParallelScanner()
+	_, err := s.Scan(ctx, root, ScanOptions{ShowHidden: true}, progressCh)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+
+	// If scanner goroutines are not fully stopped before return, the next ticker
+	// send can panic after this close.
+	close(progressCh)
+	time.Sleep(120 * time.Millisecond)
 }
 
 func TestScan_NormalCompletion(t *testing.T) {

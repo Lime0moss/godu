@@ -349,6 +349,24 @@ func validateRemoteTarget(raw string) (bool, error) {
 	if strings.ContainsAny(user, " \t\n\r") || strings.ContainsAny(host, " \t\n\r") {
 		return true, fmt.Errorf("invalid remote target %q: spaces are not allowed", raw)
 	}
+	if strings.HasPrefix(host, "[") {
+		end := strings.Index(host, "]")
+		if end == -1 {
+			return true, fmt.Errorf("invalid remote target %q: malformed bracketed host", raw)
+		}
+		if end == 1 {
+			return true, fmt.Errorf("invalid remote target %q: empty host", raw)
+		}
+		if end != len(host)-1 {
+			rest := host[end+1:]
+			if strings.HasPrefix(rest, ":") && isAllDigits(rest[1:]) {
+				return true, fmt.Errorf("remote target %q must not include :port; use --ssh-port", raw)
+			}
+			return true, fmt.Errorf("invalid remote target %q: malformed bracketed host", raw)
+		}
+	} else if strings.Contains(host, "]") {
+		return true, fmt.Errorf("invalid remote target %q: malformed bracketed host", raw)
+	}
 	if looksLikeHostPort(host) {
 		return true, fmt.Errorf("remote target %q must not include :port; use --ssh-port", raw)
 	}
@@ -361,10 +379,17 @@ func looksLikeHostPort(host string) bool {
 		return false
 	}
 	_, port, ok := strings.Cut(host, ":")
-	if !ok || port == "" {
+	if !ok {
 		return false
 	}
-	for _, r := range port {
+	return isAllDigits(port)
+}
+
+func isAllDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
 		if r < '0' || r > '9' {
 			return false
 		}

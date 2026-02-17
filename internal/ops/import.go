@@ -41,12 +41,46 @@ func ImportJSON(path string) (*model.DirNode, error) {
 	}
 	defer f.Close()
 
-	// Parse the top-level array: [version, minor, header, rootDir]
-	var raw []json.RawMessage
 	dec := json.NewDecoder(f)
-	if err := dec.Decode(&raw); err != nil {
-		return nil, fmt.Errorf("invalid JSON: %w", err)
+	if err := expectDelim(dec, '[', "invalid JSON: top-level value must be an array"); err != nil {
+		return nil, err
 	}
+
+	var root *model.DirNode
+	elem := 0
+	for dec.More() {
+		switch elem {
+		case 0, 1, 2:
+			var discard any
+			if err := dec.Decode(&discard); err != nil {
+				return nil, fmt.Errorf("invalid ncdu format: cannot parse top-level element %d: %w", elem, err)
+			}
+		case 3:
+			subdir, err := parseDirFromDecoder(dec, nil, 0, false)
+			if err != nil {
+				return nil, fmt.Errorf("cannot parse root directory: %w", err)
+			}
+			root = subdir
+		default:
+			// Ignore optional trailing top-level metadata while still validating JSON.
+			var discard any
+			if err := dec.Decode(&discard); err != nil {
+				return nil, fmt.Errorf("invalid ncdu format: cannot parse top-level element %d: %w", elem, err)
+			}
+		}
+		elem++
+	}
+	if err := expectDelim(dec, ']', "invalid JSON: malformed top-level array"); err != nil {
+		return nil, err
+	}
+
+	if elem < 4 {
+		return nil, fmt.Errorf("invalid ncdu format: expected at least 4 elements, got %d", elem)
+	}
+	if root == nil {
+		return nil, fmt.Errorf("invalid ncdu format: missing root directory")
+	}
+
 	// Reject trailing non-whitespace input.
 	if err := dec.Decode(&struct{}{}); err != io.EOF {
 		if err == nil {
@@ -55,40 +89,28 @@ func ImportJSON(path string) (*model.DirNode, error) {
 		return nil, fmt.Errorf("invalid JSON: trailing data after top-level array: %w", err)
 	}
 
-	if len(raw) < 4 {
-		return nil, fmt.Errorf("invalid ncdu format: expected at least 4 elements, got %d", len(raw))
-	}
-
-	// raw[3] is the root directory array
-	root, err := parseDir(raw[3], nil, 0)
-	if err != nil {
-		return nil, fmt.Errorf("cannot parse root directory: %w", err)
-	}
-
 	root.UpdateSize()
 	return root, nil
 }
 
 const maxImportDepth = 1000
 
-func parseDir(data json.RawMessage, parent *model.DirNode, depth int) (*model.DirNode, error) {
+func parseDirFromDecoder(dec *json.Decoder, parent *model.DirNode, depth int, openConsumed bool) (*model.DirNode, error) {
 	if depth > maxImportDepth {
 		return nil, fmt.Errorf("directory nesting exceeds maximum depth of %d", maxImportDepth)
 	}
-
-	// A directory is an array: [{dir_entry}, child1, child2, ...]
-	var elements []json.RawMessage
-	if err := json.Unmarshal(data, &elements); err != nil {
-		return nil, fmt.Errorf("directory is not an array: %w", err)
+	if !openConsumed {
+		if err := expectDelim(dec, '[', "directory is not an array"); err != nil {
+			return nil, err
+		}
 	}
-
-	if len(elements) == 0 {
+	if !dec.More() {
 		return nil, fmt.Errorf("empty directory array")
 	}
 
-	// First element is the directory entry object
-	var entry ncduEntry
-	if err := json.Unmarshal(elements[0], &entry); err != nil {
+	// First element is the directory entry object.
+	entry, err := parseNCDUEntry(dec, false)
+	if err != nil {
 		return nil, fmt.Errorf("cannot parse directory entry: %w", err)
 	}
 
@@ -133,27 +155,27 @@ func parseDir(data json.RawMessage, parent *model.DirNode, depth int) (*model.Di
 		},
 	}
 
-	// Remaining elements are children (objects = files, arrays = subdirs)
-	for i := 1; i < len(elements); i++ {
-		child := elements[i]
-
-		// Check if it starts with '[' (directory) or '{' (file)
-		trimmed := trimLeadingWhitespace(child)
-		if len(trimmed) == 0 {
-			continue
+	// Remaining elements are children (objects = files, arrays = subdirs).
+	for i := 1; dec.More(); i++ {
+		tok, err := dec.Token()
+		if err != nil {
+			return nil, fmt.Errorf("cannot parse child at index %d: %w", i, err)
+		}
+		delim, ok := tok.(json.Delim)
+		if !ok {
+			return nil, fmt.Errorf("unexpected child element at index %d: expected array or object", i)
 		}
 
-		if trimmed[0] == '[' {
-			// Subdirectory
-			subDir, err := parseDir(child, dir, depth+1)
+		switch delim {
+		case '[':
+			subDir, err := parseDirFromDecoder(dec, dir, depth+1, true)
 			if err != nil {
 				return nil, err
 			}
 			dir.AddChild(subDir)
-		} else if trimmed[0] == '{' {
-			// File entry
-			var fileEntry ncduEntry
-			if err := json.Unmarshal(child, &fileEntry); err != nil {
+		case '{':
+			fileEntry, err := parseNCDUEntry(dec, true)
+			if err != nil {
 				return nil, fmt.Errorf("cannot parse file entry: %w", err)
 			}
 
@@ -190,30 +212,103 @@ func parseDir(data json.RawMessage, parent *model.DirNode, depth int) (*model.Di
 				Parent: dir,
 			}
 			dir.AddChild(fileNode)
-		} else {
+		default:
 			return nil, fmt.Errorf("unexpected child element at index %d: expected array or object", i)
 		}
+	}
+	if err := expectDelim(dec, ']', "directory is not an array"); err != nil {
+		return nil, err
 	}
 
 	dir.UpdateSize()
 	return dir, nil
 }
 
-func validateSizeField(field string, value int64) error {
-	if value < 0 {
-		return fmt.Errorf("%s must be non-negative", field)
+func parseNCDUEntry(dec *json.Decoder, openConsumed bool) (ncduEntry, error) {
+	if !openConsumed {
+		if err := expectDelim(dec, '{', "entry is not an object"); err != nil {
+			return ncduEntry{}, err
+		}
+	}
+
+	var entry ncduEntry
+	for dec.More() {
+		keyTok, err := dec.Token()
+		if err != nil {
+			return ncduEntry{}, err
+		}
+		key, ok := keyTok.(string)
+		if !ok {
+			return ncduEntry{}, fmt.Errorf("entry object has non-string key")
+		}
+
+		switch key {
+		case "name":
+			if err := dec.Decode(&entry.Name); err != nil {
+				return ncduEntry{}, err
+			}
+		case "asize":
+			if err := dec.Decode(&entry.Asize); err != nil {
+				return ncduEntry{}, err
+			}
+		case "dsize":
+			if err := dec.Decode(&entry.Dsize); err != nil {
+				return ncduEntry{}, err
+			}
+		case "ino":
+			if err := dec.Decode(&entry.Ino); err != nil {
+				return ncduEntry{}, err
+			}
+		case "nlink":
+			if err := dec.Decode(&entry.Nlink); err != nil {
+				return ncduEntry{}, err
+			}
+		case "hlnkc":
+			if err := dec.Decode(&entry.Hlnkc); err != nil {
+				return ncduEntry{}, err
+			}
+		case "read_error":
+			if err := dec.Decode(&entry.Err); err != nil {
+				return ncduEntry{}, err
+			}
+		case "symlink":
+			if err := dec.Decode(&entry.Symlink); err != nil {
+				return ncduEntry{}, err
+			}
+		case "usage_estimated":
+			if err := dec.Decode(&entry.UsageEstimated); err != nil {
+				return ncduEntry{}, err
+			}
+		default:
+			// Unknown fields are ignored for forward compatibility.
+			var discard any
+			if err := dec.Decode(&discard); err != nil {
+				return ncduEntry{}, err
+			}
+		}
+	}
+
+	if err := expectDelim(dec, '}', "entry is not an object"); err != nil {
+		return ncduEntry{}, err
+	}
+	return entry, nil
+}
+
+func expectDelim(dec *json.Decoder, want rune, msg string) error {
+	tok, err := dec.Token()
+	if err != nil {
+		return fmt.Errorf("%s: %w", msg, err)
+	}
+	d, ok := tok.(json.Delim)
+	if !ok || rune(d) != want {
+		return fmt.Errorf("%s", msg)
 	}
 	return nil
 }
 
-func trimLeadingWhitespace(data []byte) []byte {
-	for i := 0; i < len(data); i++ {
-		switch data[i] {
-		case ' ', '\t', '\n', '\r':
-			continue
-		default:
-			return data[i:]
-		}
+func validateSizeField(field string, value int64) error {
+	if value < 0 {
+		return fmt.Errorf("%s must be non-negative", field)
 	}
 	return nil
 }

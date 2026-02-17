@@ -82,3 +82,26 @@ func TestResolveScanTarget_RejectsHostPortInTarget(t *testing.T) {
 		t.Fatalf("expected ssh-port hint, got: %v", err)
 	}
 }
+
+func TestResolveScanTarget_BracketedIPv6Remote(t *testing.T) {
+	target, err := resolveScanTarget([]string{"alice@[::1]"})
+	if err != nil {
+		t.Fatalf("resolveScanTarget returned error: %v", err)
+	}
+	if !target.Remote {
+		t.Fatal("expected remote target")
+	}
+	if target.SSHDestination != "alice@[::1]" {
+		t.Fatalf("unexpected ssh target: %q", target.SSHDestination)
+	}
+}
+
+func TestResolveScanTarget_RejectsBracketedIPv6HostPortInTarget(t *testing.T) {
+	_, err := resolveScanTarget([]string{"alice@[::1]:2222"})
+	if err == nil {
+		t.Fatal("expected error for bracketed host:port target")
+	}
+	if !strings.Contains(err.Error(), "--ssh-port") {
+		t.Fatalf("expected ssh-port hint, got: %v", err)
+	}
+}
