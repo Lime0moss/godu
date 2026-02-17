@@ -90,6 +90,12 @@ func TestRemoveKnownHostEntries(t *testing.T) {
 	if strings.Contains(out2222, "[example.com]:2222 ssh-ed25519 CCCC") {
 		t.Fatal("expected custom port entry removed")
 	}
+	if !strings.Contains(out2222, "example.com ssh-ed25519 AAAA") {
+		t.Fatal("expected default host entry to remain when replacing custom port")
+	}
+	if !strings.Contains(out2222, "[example.com]:22 ssh-ed25519 BBBB") {
+		t.Fatal("expected :22 entry to remain when replacing custom port")
+	}
 	if !strings.Contains(out2222, "other.com ssh-ed25519 DDDD") {
 		t.Fatal("expected unrelated host entry to remain")
 	}

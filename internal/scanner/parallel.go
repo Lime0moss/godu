@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"github.com/sadopc/godu/internal/model"
@@ -66,16 +65,16 @@ func (s *ParallelScanner) Scan(ctx context.Context, path string, opts ScanOption
 
 	// Hardlink tracking (keyed by device+inode to avoid cross-filesystem collisions)
 	var inodeMu sync.Mutex
-	inodeMap := make(map[inodeKey]bool)
+	inodeMap := make(map[inodeKey]struct{})
 
 	// Progress tracking
 	var filesScanned, dirsScanned, bytesFound, errCount atomic.Int64
 	startTime := time.Now()
 
 	// Exclude set for fast lookup
-	excludeSet := make(map[string]bool, len(opts.ExcludePatterns))
+	excludeSet := make(map[string]struct{}, len(opts.ExcludePatterns))
 	for _, p := range opts.ExcludePatterns {
-		excludeSet[p] = true
+		excludeSet[p] = struct{}{}
 	}
 
 	// Create root node
@@ -128,7 +127,7 @@ func (s *ParallelScanner) Scan(ctx context.Context, path string, opts ScanOption
 	wg.Wait()
 
 	// Bottom-up size calculation after all goroutines complete
-	updateSizeRecursive(root)
+	root.UpdateSizeRecursive()
 
 	// Send final progress
 	if progress != nil {
@@ -164,9 +163,9 @@ func (s *ParallelScanner) scanDir(
 	sem chan struct{},
 	wg *sync.WaitGroup,
 	filesScanned, dirsScanned, bytesFound, errCount *atomic.Int64,
-	inodeMap map[inodeKey]bool,
+	inodeMap map[inodeKey]struct{},
 	inodeMu *sync.Mutex,
-	excludeSet map[string]bool,
+	excludeSet map[string]struct{},
 	visitedDirs *sync.Map,
 ) {
 	select {
@@ -177,6 +176,7 @@ func (s *ParallelScanner) scanDir(
 
 	entries, err := os.ReadDir(dirPath)
 	if err != nil {
+		parent.Flag |= model.FlagError
 		errCount.Add(1)
 		return
 	}
@@ -210,12 +210,17 @@ func (s *ParallelScanner) scanDir(
 		name := entry.Name()
 
 		// Skip excluded patterns
-		if excludeSet[name] {
+		if _, excluded := excludeSet[name]; excluded {
 			continue
 		}
 
 		// Skip hidden files/dirs when ShowHidden is false
 		if !opts.ShowHidden && len(name) > 0 && name[0] == '.' {
+			continue
+		}
+
+		// Skip special files (devices, sockets, pipes, irregular)
+		if isSpecialMode(entry.Type()) {
 			continue
 		}
 
@@ -254,31 +259,18 @@ func (s *ParallelScanner) scanDir(
 			resolvedPath, err := filepath.EvalSymlinks(fullPath)
 			if err != nil {
 				errCount.Add(1)
-				// Add a placeholder so broken symlinks are visible
-				fileNode := &model.FileNode{
-					Name:   name,
-					Size:   0,
-					Usage:  0,
-					Flag:   model.FlagSymlink | model.FlagError,
-					Parent: parent,
-				}
-				parent.AddChild(fileNode)
+				parent.AddChild(model.NewBrokenSymlinkNode(name, parent))
 				filesScanned.Add(1)
 				continue
 			}
 			targetInfo, err := os.Stat(resolvedPath)
 			if err != nil {
 				errCount.Add(1)
-				// Add a placeholder so broken symlinks are visible
-				fileNode := &model.FileNode{
-					Name:   name,
-					Size:   0,
-					Usage:  0,
-					Flag:   model.FlagSymlink | model.FlagError,
-					Parent: parent,
-				}
-				parent.AddChild(fileNode)
+				parent.AddChild(model.NewBrokenSymlinkNode(name, parent))
 				filesScanned.Add(1)
+				continue
+			}
+			if isSpecialMode(targetInfo.Mode()) {
 				continue
 			}
 			if targetInfo.IsDir() {
@@ -309,18 +301,14 @@ func (s *ParallelScanner) scanDir(
 			// Symlink to file — fall through to file handling below
 			info := targetInfo
 
-			var inode uint64
-			var diskUsage int64
 			flag := model.FlagSymlink
+			si := getStatInfo(info)
 
-			if stat, ok := info.Sys().(*syscall.Stat_t); ok {
-				inode = stat.Ino
-				diskUsage = int64(stat.Blocks) * 512
-
+			if si.ok {
 				// Dedup: symlink target may alias a regular file (even with Nlink==1)
 				inodeMu.Lock()
-				ik := inodeKey{dev: uint64(stat.Dev), ino: stat.Ino}
-				if inodeMap[ik] {
+				ik := inodeKey{dev: si.dev, ino: si.inode}
+				if _, seen := inodeMap[ik]; seen {
 					flag |= model.FlagHardlink
 					inodeMu.Unlock()
 					fileNode := &model.FileNode{
@@ -328,7 +316,7 @@ func (s *ParallelScanner) scanDir(
 						Size:   0,
 						Usage:  0,
 						Mtime:  info.ModTime(),
-						Inode:  inode,
+						Inode:  si.inode,
 						Flag:   flag,
 						Parent: parent,
 					}
@@ -336,18 +324,16 @@ func (s *ParallelScanner) scanDir(
 					filesScanned.Add(1)
 					continue
 				}
-				inodeMap[ik] = true
+				inodeMap[ik] = struct{}{}
 				inodeMu.Unlock()
-			} else {
-				diskUsage = info.Size()
 			}
 
 			fileNode := &model.FileNode{
 				Name:   name,
 				Size:   info.Size(),
-				Usage:  diskUsage,
+				Usage:  si.diskUsage,
 				Mtime:  info.ModTime(),
-				Inode:  inode,
+				Inode:  si.inode,
 				Flag:   flag,
 				Parent: parent,
 			}
@@ -362,52 +348,43 @@ func (s *ParallelScanner) scanDir(
 			}
 
 			var flag model.NodeFlag
-			var inode uint64
-			var diskUsage int64
-
 			if entry.Type()&os.ModeSymlink != 0 {
 				flag = model.FlagSymlink
 			}
 
-			// Get inode and disk usage from syscall stat
-			if stat, ok := info.Sys().(*syscall.Stat_t); ok {
-				inode = stat.Ino
-				diskUsage = int64(stat.Blocks) * 512 // blocks are 512-byte units
+			si := getStatInfo(info)
 
-				// Hardlink detection (also dedup when following symlinks to avoid double-counting)
-				if stat.Nlink > 1 || opts.FollowSymlinks {
-					inodeMu.Lock()
-					ik := inodeKey{dev: uint64(stat.Dev), ino: stat.Ino}
-					if inodeMap[ik] {
-						flag |= model.FlagHardlink
-						inodeMu.Unlock()
-						// Still add the node but don't count size twice
-						fileNode := &model.FileNode{
-							Name:   name,
-							Size:   0,
-							Usage:  0,
-							Mtime:  info.ModTime(),
-							Inode:  inode,
-							Flag:   flag,
-							Parent: parent,
-						}
-						parent.AddChild(fileNode)
-						filesScanned.Add(1)
-						continue
-					}
-					inodeMap[ik] = true
+			// Hardlink detection (also dedup when following symlinks to avoid double-counting)
+			if si.ok && (si.nlink > 1 || opts.FollowSymlinks) {
+				inodeMu.Lock()
+				ik := inodeKey{dev: si.dev, ino: si.inode}
+				if _, seen := inodeMap[ik]; seen {
+					flag |= model.FlagHardlink
 					inodeMu.Unlock()
+					// Still add the node but don't count size twice
+					fileNode := &model.FileNode{
+						Name:   name,
+						Size:   0,
+						Usage:  0,
+						Mtime:  info.ModTime(),
+						Inode:  si.inode,
+						Flag:   flag,
+						Parent: parent,
+					}
+					parent.AddChild(fileNode)
+					filesScanned.Add(1)
+					continue
 				}
-			} else {
-				diskUsage = info.Size()
+				inodeMap[ik] = struct{}{}
+				inodeMu.Unlock()
 			}
 
 			fileNode := &model.FileNode{
 				Name:   name,
 				Size:   info.Size(),
-				Usage:  diskUsage,
+				Usage:  si.diskUsage,
 				Mtime:  info.ModTime(),
-				Inode:  inode,
+				Inode:  si.inode,
 				Flag:   flag,
 				Parent: parent,
 			}
@@ -430,13 +407,6 @@ func isWithin(root, target string) bool {
 	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
-// updateSizeRecursive performs a bottom-up size calculation.
-// Children are updated before parents, ensuring correct totals.
-func updateSizeRecursive(dir *model.DirNode) {
-	for _, child := range dir.Children {
-		if cd, ok := child.(*model.DirNode); ok {
-			updateSizeRecursive(cd)
-		}
-	}
-	dir.UpdateSize()
+func isSpecialMode(mode os.FileMode) bool {
+	return mode&(os.ModeDevice|os.ModeCharDevice|os.ModeSocket|os.ModeNamedPipe|os.ModeIrregular) != 0
 }

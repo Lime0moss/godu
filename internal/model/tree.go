@@ -133,18 +133,50 @@ func (d *DirNode) propagateSizeUpdate() {
 	}
 }
 
+// ReadChildren returns the children slice directly without copying.
+// Safe for post-scan read-only access when no concurrent writes occur.
+func (d *DirNode) ReadChildren() []TreeNode {
+	return d.Children
+}
+
+// NewBrokenSymlinkNode creates a placeholder node for a broken symlink.
+func NewBrokenSymlinkNode(name string, parent *DirNode) *FileNode {
+	return &FileNode{
+		Name:   name,
+		Size:   0,
+		Usage:  0,
+		Flag:   FlagSymlink | FlagError,
+		Parent: parent,
+	}
+}
+
+// UpdateSizeRecursive performs a bottom-up size calculation.
+// Children are updated before parents, ensuring correct totals.
+// Must be called only after all concurrent writes are complete.
+func (d *DirNode) UpdateSizeRecursive() {
+	for _, child := range d.Children {
+		if cd, ok := child.(*DirNode); ok {
+			cd.UpdateSizeRecursive()
+		}
+	}
+	d.UpdateSize()
+}
+
 // buildPath reconstructs the full path by walking up the parent chain.
 func buildPath(parent *DirNode, name string) string {
 	if parent == nil {
 		return name
 	}
-	parts := []string{name}
+	depth := 0
 	for p := parent; p != nil; p = p.Parent {
-		parts = append(parts, p.Name)
+		depth++
 	}
-	// Reverse
-	for i, j := 0, len(parts)-1; i < j; i, j = i+1, j-1 {
-		parts[i], parts[j] = parts[j], parts[i]
+	parts := make([]string, depth+1)
+	parts[depth] = name
+	i := depth - 1
+	for p := parent; p != nil; p = p.Parent {
+		parts[i] = p.Name
+		i--
 	}
 	return filepath.Join(parts...)
 }

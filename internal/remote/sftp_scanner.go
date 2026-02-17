@@ -21,11 +21,15 @@ import (
 
 const defaultRemotePath = "."
 
+const remoteBlockSize int64 = 4096
+
 // Config configures a remote SFTP scan.
 type Config struct {
-	Target    string
-	Port      int
-	BatchMode bool
+	Target      string
+	Port        int
+	BatchMode   bool
+	Timeout     time.Duration
+	ScanTimeout time.Duration
 }
 
 // SFTPScanner scans a remote filesystem over the SFTP subsystem.
@@ -41,6 +45,15 @@ type sftpClient interface {
 	RealPath(string) (string, error)
 }
 
+var dialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+	var d net.Dialer
+	return d.DialContext(ctx, network, address)
+}
+
+var sshNewClientConn = func(conn net.Conn, addr string, config *ssh.ClientConfig) (ssh.Conn, <-chan ssh.NewChannel, <-chan *ssh.Request, error) {
+	return ssh.NewClientConn(conn, addr, config)
+}
+
 // NewSFTPScanner creates a new remote scanner.
 func NewSFTPScanner(cfg Config) *SFTPScanner {
 	return &SFTPScanner{cfg: cfg, dial: dialSFTP}
@@ -53,6 +66,12 @@ func (s *SFTPScanner) Scan(ctx context.Context, remotePath string, opts scanner.
 	}
 	if s.dial == nil {
 		s.dial = dialSFTP
+	}
+
+	if s.cfg.ScanTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, s.cfg.ScanTimeout)
+		defer cancel()
 	}
 
 	client, closer, err := s.dial(ctx, s.cfg)
@@ -89,9 +108,9 @@ func (s *SFTPScanner) scanWithClient(ctx context.Context, client sftpClient, rem
 		},
 	}
 
-	excludeSet := make(map[string]bool, len(opts.ExcludePatterns))
+	excludeSet := make(map[string]struct{}, len(opts.ExcludePatterns))
 	for _, p := range opts.ExcludePatterns {
-		excludeSet[p] = true
+		excludeSet[p] = struct{}{}
 	}
 
 	var filesScanned, dirsScanned, bytesFound, errCount atomic.Int64
@@ -137,10 +156,10 @@ func (s *SFTPScanner) scanWithClient(ctx context.Context, client sftpClient, rem
 	visitedDirs.Store(rootPath, true)
 
 	var wg sync.WaitGroup
-	s.scanDir(ctx, client, rootPath, root, opts, sem, &wg, &filesScanned, &dirsScanned, &bytesFound, &errCount, excludeSet, &visitedDirs)
+	s.scanDir(ctx, client, rootPath, rootPath, root, opts, sem, &wg, &filesScanned, &dirsScanned, &bytesFound, &errCount, excludeSet, &visitedDirs)
 	wg.Wait()
 
-	updateSizeRecursive(root)
+	root.UpdateSizeRecursive()
 
 	if progress != nil {
 		close(progressDone)
@@ -169,13 +188,14 @@ func (s *SFTPScanner) scanWithClient(ctx context.Context, client sftpClient, rem
 func (s *SFTPScanner) scanDir(
 	ctx context.Context,
 	client sftpClient,
+	scanRoot string,
 	dirPath string,
 	parent *model.DirNode,
 	opts scanner.ScanOptions,
 	sem chan struct{},
 	wg *sync.WaitGroup,
 	filesScanned, dirsScanned, bytesFound, errCount *atomic.Int64,
-	excludeSet map[string]bool,
+	excludeSet map[string]struct{},
 	visitedDirs *sync.Map,
 ) {
 	select {
@@ -186,6 +206,7 @@ func (s *SFTPScanner) scanDir(
 
 	entries, err := client.ReadDir(dirPath)
 	if err != nil {
+		parent.Flag |= model.FlagError
 		errCount.Add(1)
 		return
 	}
@@ -199,10 +220,10 @@ func (s *SFTPScanner) scanDir(
 			go func(p string, d *model.DirNode) {
 				defer wg.Done()
 				defer func() { <-sem }()
-				s.scanDir(ctx, client, p, d, opts, sem, wg, filesScanned, dirsScanned, bytesFound, errCount, excludeSet, visitedDirs)
+				s.scanDir(ctx, client, scanRoot, p, d, opts, sem, wg, filesScanned, dirsScanned, bytesFound, errCount, excludeSet, visitedDirs)
 			}(path, dir)
 		default:
-			s.scanDir(ctx, client, path, dir, opts, sem, wg, filesScanned, dirsScanned, bytesFound, errCount, excludeSet, visitedDirs)
+			s.scanDir(ctx, client, scanRoot, path, dir, opts, sem, wg, filesScanned, dirsScanned, bytesFound, errCount, excludeSet, visitedDirs)
 		}
 	}
 
@@ -214,7 +235,7 @@ func (s *SFTPScanner) scanDir(
 		}
 
 		name := entry.Name()
-		if excludeSet[name] {
+		if _, excluded := excludeSet[name]; excluded {
 			continue
 		}
 		if !opts.ShowHidden && isHidden(name) {
@@ -229,15 +250,9 @@ func (s *SFTPScanner) scanDir(
 				resolvedPath, targetInfo, err := resolveSymlinkTarget(client, fullPath)
 				if err != nil {
 					errCount.Add(1)
-					fileNode := &model.FileNode{
-						Name:   name,
-						Size:   0,
-						Usage:  0,
-						Mtime:  entry.ModTime(),
-						Flag:   model.FlagSymlink | model.FlagError,
-						Parent: parent,
-					}
-					parent.AddChild(fileNode)
+					node := model.NewBrokenSymlinkNode(name, parent)
+					node.Mtime = entry.ModTime()
+					parent.AddChild(node)
 					filesScanned.Add(1)
 					continue
 				}
@@ -253,6 +268,11 @@ func (s *SFTPScanner) scanDir(
 					}
 					parent.AddChild(childDir)
 
+					// Skip symlinks pointing inside the scan root (will be scanned via normal traversal)
+					if isWithinRemote(scanRoot, resolvedPath) {
+						continue
+					}
+
 					if _, loaded := visitedDirs.LoadOrStore(resolvedPath, true); loaded {
 						continue
 					}
@@ -264,7 +284,7 @@ func (s *SFTPScanner) scanDir(
 				fileNode := &model.FileNode{
 					Name:   name,
 					Size:   size,
-					Usage:  size,
+					Usage:  estimateDiskUsage(size),
 					Mtime:  targetInfo.ModTime(),
 					Flag:   model.FlagSymlink,
 					Parent: parent,
@@ -279,7 +299,7 @@ func (s *SFTPScanner) scanDir(
 			fileNode := &model.FileNode{
 				Name:   name,
 				Size:   size,
-				Usage:  size,
+				Usage:  estimateDiskUsage(size),
 				Mtime:  entry.ModTime(),
 				Flag:   model.FlagSymlink,
 				Parent: parent,
@@ -316,7 +336,7 @@ func (s *SFTPScanner) scanDir(
 		fileNode := &model.FileNode{
 			Name:   name,
 			Size:   size,
-			Usage:  size,
+			Usage:  estimateDiskUsage(size),
 			Mtime:  entry.ModTime(),
 			Parent: parent,
 		}
@@ -362,20 +382,33 @@ func cleanRemotePath(p string) string {
 	return clean
 }
 
+func estimateDiskUsage(size int64) int64 {
+	if size <= 0 {
+		return 0
+	}
+	blocks := (size + remoteBlockSize - 1) / remoteBlockSize
+	return blocks * remoteBlockSize
+}
+
 func isHidden(name string) bool {
 	return len(name) > 0 && name[0] == '.'
 }
 
-func updateSizeRecursive(dir *model.DirNode) {
-	for _, child := range dir.Children {
-		if cd, ok := child.(*model.DirNode); ok {
-			updateSizeRecursive(cd)
-		}
+// isWithinRemote checks whether target is inside root using POSIX path semantics.
+func isWithinRemote(root, target string) bool {
+	root = pathpkg.Clean(root)
+	target = pathpkg.Clean(target)
+	if root == target {
+		return true
 	}
-	dir.UpdateSize()
+	prefix := root
+	if !strings.HasSuffix(prefix, "/") {
+		prefix += "/"
+	}
+	return strings.HasPrefix(target, prefix)
 }
 
-func dialSFTP(_ context.Context, cfg Config) (sftpClient, io.Closer, error) {
+func dialSFTP(ctx context.Context, cfg Config) (sftpClient, io.Closer, error) {
 	if cfg.Port < 1 || cfg.Port > 65535 {
 		return nil, nil, fmt.Errorf("ssh port must be between 1 and 65535")
 	}
@@ -395,15 +428,22 @@ func dialSFTP(_ context.Context, cfg Config) (sftpClient, io.Closer, error) {
 		return nil, nil, err
 	}
 
+	timeout := cfg.Timeout
+	if timeout <= 0 {
+		timeout = 15 * time.Second
+	}
+	dialCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
 	sshConfig := &ssh.ClientConfig{
 		User:            user,
 		Auth:            auth,
 		HostKeyCallback: hostCB,
-		Timeout:         15 * time.Second,
+		Timeout:         timeout,
 	}
 
 	addr := net.JoinHostPort(host, fmt.Sprintf("%d", cfg.Port))
-	sshClient, err := ssh.Dial("tcp", addr, sshConfig)
+	sshClient, err := connectSSH(dialCtx, addr, sshConfig)
 	if err != nil {
 		return nil, nil, fmt.Errorf("SSH connection failed: %w", err)
 	}
@@ -416,6 +456,31 @@ func dialSFTP(_ context.Context, cfg Config) (sftpClient, io.Closer, error) {
 
 	closer := &remoteCloser{ssh: sshClient, sftp: sftpClient}
 	return sftpClient, closer, nil
+}
+
+func connectSSH(ctx context.Context, addr string, config *ssh.ClientConfig) (*ssh.Client, error) {
+	conn, err := dialContext(ctx, "tcp", addr)
+	if err != nil {
+		return nil, err
+	}
+
+	// Ensure cancellation interrupts handshake/authentication.
+	done := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = conn.Close()
+		case <-done:
+		}
+	}()
+
+	c, chans, reqs, err := sshNewClientConn(conn, addr, config)
+	close(done)
+	if err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	return ssh.NewClient(c, chans, reqs), nil
 }
 
 type remoteCloser struct {

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/sadopc/godu/internal/model"
@@ -18,6 +19,35 @@ type rect struct {
 type treemapItem struct {
 	node model.TreeNode
 	size int64
+}
+
+type treemapGrid struct {
+	grid      [][]rune
+	colorGrid [][]lipgloss.Color
+	w, h      int
+}
+
+var treemapGridPool = sync.Pool{
+	New: func() any { return &treemapGrid{} },
+}
+
+func getTreemapGrid(w, h int) *treemapGrid {
+	g := treemapGridPool.Get().(*treemapGrid)
+	if g.w != w || g.h != h {
+		g.grid = make([][]rune, h)
+		g.colorGrid = make([][]lipgloss.Color, h)
+		for y := 0; y < h; y++ {
+			g.grid[y] = make([]rune, w)
+			g.colorGrid[y] = make([]lipgloss.Color, w)
+		}
+		g.w = w
+		g.h = h
+	}
+	return g
+}
+
+func putTreemapGrid(g *treemapGrid) {
+	treemapGridPool.Put(g)
 }
 
 var treemapPalette = []lipgloss.Color{
@@ -37,7 +67,7 @@ func RenderTreemap(theme style.Theme, dir *model.DirNode, useApparent bool, show
 		return ""
 	}
 
-	children := dir.GetChildren()
+	children := dir.ReadChildren()
 	if !showHidden {
 		var filtered []model.TreeNode
 		for _, c := range children {
@@ -90,12 +120,12 @@ func RenderTreemap(theme style.Theme, dir *model.DirNode, useApparent bool, show
 		items = append(items, treemapItem{node: nil, size: otherSize})
 	}
 
-	// Create grid
-	grid := make([][]rune, height)
-	colorGrid := make([][]lipgloss.Color, height)
+	// Create grid (pooled)
+	g := getTreemapGrid(width, height)
+	defer putTreemapGrid(g)
+	grid := g.grid
+	colorGrid := g.colorGrid
 	for y := 0; y < height; y++ {
-		grid[y] = make([]rune, width)
-		colorGrid[y] = make([]lipgloss.Color, width)
 		for x := 0; x < width; x++ {
 			grid[y][x] = ' '
 			colorGrid[y][x] = theme.BgDark

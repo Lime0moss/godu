@@ -5,8 +5,11 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/sadopc/godu/internal/ops"
@@ -41,6 +44,8 @@ func main() {
 	concurrency := flag.Int("j", 0, "Max concurrent directory scans (0 = auto: 3x CPU cores)")
 	sshPort := flag.Int("ssh-port", defaultSSHPort, "SSH port for remote scans")
 	sshBatch := flag.Bool("ssh-batch", false, "Disable SSH password prompts (key/agent auth only)")
+	sshTimeout := flag.Int("ssh-timeout", 15, "SSH connection timeout in seconds (default 15)")
+	sshScanTimeout := flag.Int("ssh-scan-timeout", 0, "SSH scan timeout in seconds (0 = no limit)")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "godu - Interactive disk usage analyzer\n\n")
@@ -60,6 +65,21 @@ func main() {
 	}
 
 	flag.Parse()
+
+	// Detect conflicting --hidden / --no-hidden flags
+	hiddenSet, noHiddenSet := false, false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "hidden" {
+			hiddenSet = true
+		}
+		if f.Name == "no-hidden" {
+			noHiddenSet = true
+		}
+	})
+	if hiddenSet && noHiddenSet {
+		fmt.Fprintf(os.Stderr, "Error: --hidden and --no-hidden cannot be used together\n")
+		os.Exit(1)
+	}
 
 	if *showVersion {
 		fmt.Printf("godu %s\n", version)
@@ -138,7 +158,7 @@ func main() {
 	}
 
 	if target.Remote {
-		if err := runRemoteScan(target, *sshPort, *sshBatch, *exportPath, opts); err != nil {
+		if err := runRemoteScan(target, *sshPort, *sshBatch, *sshTimeout, *sshScanTimeout, *exportPath, opts); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -199,14 +219,37 @@ func main() {
 	}
 }
 
-func runRemoteScan(target scanTarget, sshPort int, sshBatch bool, exportPath string, opts scanner.ScanOptions) error {
-	s := remote.NewSFTPScanner(remote.Config{
+func runRemoteScan(target scanTarget, sshPort int, sshBatch bool, sshTimeout int, sshScanTimeout int, exportPath string, opts scanner.ScanOptions) error {
+	cfg := remote.Config{
 		Target:    target.SSHDestination,
 		Port:      sshPort,
 		BatchMode: sshBatch,
-	})
+		Timeout:   time.Duration(sshTimeout) * time.Second,
+	}
+	if sshScanTimeout > 0 {
+		cfg.ScanTimeout = time.Duration(sshScanTimeout) * time.Second
+	}
+	s := remote.NewSFTPScanner(cfg)
 
-	root, err := s.Scan(context.Background(), target.RemotePath, opts, nil)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+
+	progressCh := make(chan scanner.Progress, 10)
+
+	var progressWg sync.WaitGroup
+	progressWg.Add(1)
+	go func() {
+		defer progressWg.Done()
+		for p := range progressCh {
+			fmt.Fprintf(os.Stderr, "\rScanning %s: %d files, %d dirs, %d errors...",
+				target.SSHDestination, p.FilesScanned, p.DirsScanned, p.Errors)
+		}
+		fmt.Fprintln(os.Stderr)
+	}()
+
+	root, err := s.Scan(ctx, target.RemotePath, opts, progressCh)
+	close(progressCh)
+	progressWg.Wait()
 	if err != nil {
 		return err
 	}

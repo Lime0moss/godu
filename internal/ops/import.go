@@ -3,8 +3,10 @@ package ops
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -19,7 +21,10 @@ func validateName(name string) error {
 	if name == "." || name == ".." {
 		return fmt.Errorf("invalid entry name: %q", name)
 	}
-	if strings.ContainsAny(name, "/\\") {
+	if strings.ContainsRune(name, '/') {
+		return fmt.Errorf("entry name contains path separator: %q", name)
+	}
+	if runtime.GOOS == "windows" && strings.ContainsRune(name, '\\') {
 		return fmt.Errorf("entry name contains path separator: %q", name)
 	}
 	if filepath.Base(name) != name {
@@ -38,8 +43,16 @@ func ImportJSON(path string) (*model.DirNode, error) {
 
 	// Parse the top-level array: [version, minor, header, rootDir]
 	var raw []json.RawMessage
-	if err := json.NewDecoder(f).Decode(&raw); err != nil {
+	dec := json.NewDecoder(f)
+	if err := dec.Decode(&raw); err != nil {
 		return nil, fmt.Errorf("invalid JSON: %w", err)
+	}
+	// Reject trailing non-whitespace input.
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return nil, fmt.Errorf("invalid JSON: trailing data after top-level array")
+		}
+		return nil, fmt.Errorf("invalid JSON: trailing data after top-level array: %w", err)
 	}
 
 	if len(raw) < 4 {
@@ -47,7 +60,7 @@ func ImportJSON(path string) (*model.DirNode, error) {
 	}
 
 	// raw[3] is the root directory array
-	root, err := parseDir(raw[3], nil)
+	root, err := parseDir(raw[3], nil, 0)
 	if err != nil {
 		return nil, fmt.Errorf("cannot parse root directory: %w", err)
 	}
@@ -56,7 +69,13 @@ func ImportJSON(path string) (*model.DirNode, error) {
 	return root, nil
 }
 
-func parseDir(data json.RawMessage, parent *model.DirNode) (*model.DirNode, error) {
+const maxImportDepth = 1000
+
+func parseDir(data json.RawMessage, parent *model.DirNode, depth int) (*model.DirNode, error) {
+	if depth > maxImportDepth {
+		return nil, fmt.Errorf("directory nesting exceeds maximum depth of %d", maxImportDepth)
+	}
+
 	// A directory is an array: [{dir_entry}, child1, child2, ...]
 	var elements []json.RawMessage
 	if err := json.Unmarshal(data, &elements); err != nil {
@@ -83,12 +102,24 @@ func parseDir(data json.RawMessage, parent *model.DirNode) (*model.DirNode, erro
 		entry.Name = filepath.Clean(entry.Name)
 	}
 
+	var dirFlag model.NodeFlag
+	if entry.Hlnkc {
+		dirFlag |= model.FlagHardlink
+	}
+	if entry.Err {
+		dirFlag |= model.FlagError
+	}
+	if entry.Symlink {
+		dirFlag |= model.FlagSymlink
+	}
+
 	dir := &model.DirNode{
 		FileNode: model.FileNode{
 			Name:   entry.Name,
 			Size:   entry.Asize,
 			Usage:  entry.Dsize,
 			Mtime:  time.Time{},
+			Flag:   dirFlag,
 			Parent: parent,
 		},
 	}
@@ -105,7 +136,7 @@ func parseDir(data json.RawMessage, parent *model.DirNode) (*model.DirNode, erro
 
 		if trimmed[0] == '[' {
 			// Subdirectory
-			subDir, err := parseDir(child, dir)
+			subDir, err := parseDir(child, dir, depth+1)
 			if err != nil {
 				return nil, err
 			}

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
@@ -151,46 +152,82 @@ func knownHostAddress(host string, port int) string {
 
 func knownHostCandidates(host string, port int) map[string]bool {
 	candidates := map[string]bool{
-		host:                               true,
 		fmt.Sprintf("[%s]:%d", host, port): true,
 	}
 	if port == 22 {
-		candidates[fmt.Sprintf("[%s]:22", host)] = true
+		candidates[host] = true
 	}
 	return candidates
 }
 
 func addKnownHost(path, host string, port int, key ssh.PublicKey) error {
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
-	if err != nil {
-		return fmt.Errorf("cannot update known_hosts: %w", err)
-	}
-	defer f.Close()
-
-	line := knownhosts.Line([]string{knownHostAddress(host, port)}, key)
-	if _, err := f.WriteString(line + "\n"); err != nil {
-		return fmt.Errorf("cannot write known_hosts entry: %w", err)
-	}
-	return nil
+	entry := knownhosts.Line([]string{knownHostAddress(host, port)}, key)
+	return updateKnownHosts(path, func(data []byte) ([]byte, error) {
+		updated := append([]byte{}, data...)
+		if len(updated) > 0 && updated[len(updated)-1] != '\n' {
+			updated = append(updated, '\n')
+		}
+		updated = append(updated, entry...)
+		updated = append(updated, '\n')
+		return updated, nil
+	})
 }
 
 func replaceKnownHost(path, host string, port int, key ssh.PublicKey) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("cannot read known_hosts: %w", err)
-	}
-
-	updated := removeKnownHostEntries(data, host, port)
-	if len(updated) > 0 && updated[len(updated)-1] != '\n' {
+	entry := knownhosts.Line([]string{knownHostAddress(host, port)}, key)
+	return updateKnownHosts(path, func(data []byte) ([]byte, error) {
+		updated := removeKnownHostEntries(data, host, port)
+		if len(updated) > 0 && updated[len(updated)-1] != '\n' {
+			updated = append(updated, '\n')
+		}
+		updated = append(updated, entry...)
 		updated = append(updated, '\n')
-	}
-	updated = append(updated, knownhosts.Line([]string{knownHostAddress(host, port)}, key)...)
-	updated = append(updated, '\n')
+		return updated, nil
+	})
+}
 
-	if err := os.WriteFile(path, updated, 0o600); err != nil {
-		return fmt.Errorf("cannot write known_hosts: %w", err)
+func updateKnownHosts(path string, mutate func([]byte) ([]byte, error)) error {
+	return withKnownHostsLock(path, func() error {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			if !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("cannot read known_hosts: %w", err)
+			}
+			data = nil
+		}
+
+		updated, err := mutate(data)
+		if err != nil {
+			return err
+		}
+
+		if err := os.WriteFile(path, updated, 0o600); err != nil {
+			return fmt.Errorf("cannot write known_hosts: %w", err)
+		}
+		return nil
+	})
+}
+
+func withKnownHostsLock(path string, fn func() error) error {
+	lockPath := path + ".godu.lock"
+	deadline := time.Now().Add(5 * time.Second)
+
+	for {
+		lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if err == nil {
+			_, _ = fmt.Fprintf(lockFile, "%d\n", os.Getpid())
+			_ = lockFile.Close()
+			defer os.Remove(lockPath)
+			return fn()
+		}
+		if !errors.Is(err, os.ErrExist) {
+			return fmt.Errorf("cannot lock known_hosts: %w", err)
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timed out waiting for known_hosts lock")
+		}
+		time.Sleep(25 * time.Millisecond)
 	}
-	return nil
 }
 
 func removeKnownHostEntries(data []byte, host string, port int) []byte {

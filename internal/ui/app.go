@@ -87,9 +87,9 @@ type App struct {
 	showHidden  bool
 	imported    bool
 
-	scanProgress   scanner.Progress
-	progressMu     sync.Mutex
-	latestProgress scanner.Progress
+	displayProgress  scanner.Progress
+	progressMu       sync.Mutex
+	incomingProgress scanner.Progress
 	scanCancel     context.CancelFunc
 	scanCancelMu   sync.Mutex
 
@@ -182,7 +182,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if a.state == StateScanning {
 			// Read latest progress snapshot
 			a.progressMu.Lock()
-			a.scanProgress = a.latestProgress
+			a.displayProgress = a.incomingProgress
 			a.progressMu.Unlock()
 			// Keep ticking while scanning
 			return a, a.tickCmd()
@@ -254,6 +254,12 @@ func (a *App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if key.Matches(msg, a.keys.ConfirmNo) {
 			a.state = StateBrowsing
 			return a, tea.ClearScreen
+		}
+		return a, nil
+
+	case StateExporting:
+		if key.Matches(msg, a.keys.Quit) {
+			return a, tea.Quit
 		}
 		return a, nil
 
@@ -329,6 +335,7 @@ func (a *App) handleBrowsingKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, a.keys.Rescan):
 		a.clearMarks()
+		components.InvalidateFileTypeCache()
 		a.navStack = nil
 		a.cursor = 0
 		a.offset = 0
@@ -346,7 +353,7 @@ func (a *App) View() string {
 
 	switch a.state {
 	case StateScanning:
-		return components.RenderScanProgress(a.theme, a.scanProgress, a.width, a.height)
+		return components.RenderScanProgress(a.theme, a.displayProgress, a.width, a.height)
 
 	case StateHelp:
 		return components.RenderHelp(a.theme, a.width, a.height)
@@ -518,7 +525,7 @@ func (a *App) getParentSize() int64 {
 }
 
 // scanCmd runs the directory scan in a background goroutine.
-// Progress is communicated via a.latestProgress (mutex-protected).
+// Progress is communicated via a.incomingProgress (mutex-protected).
 func (a *App) scanCmd() tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithCancel(context.Background())
@@ -530,7 +537,7 @@ func (a *App) scanCmd() tea.Cmd {
 		go func() {
 			for p := range progressCh {
 				a.progressMu.Lock()
-				a.latestProgress = p
+				a.incomingProgress = p
 				a.progressMu.Unlock()
 			}
 		}()

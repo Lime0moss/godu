@@ -141,7 +141,7 @@ func aggregateFileTypes(dir *model.DirNode, useApparent bool, showHidden bool) [
 
 	var walk func(d *model.DirNode)
 	walk = func(d *model.DirNode) {
-		for _, child := range d.GetChildren() {
+		for _, child := range d.ReadChildren() {
 			name := child.GetName()
 			if !showHidden && len(name) > 0 && name[0] == '.' {
 				continue

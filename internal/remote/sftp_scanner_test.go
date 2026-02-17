@@ -2,8 +2,10 @@ package remote
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	pathpkg "path"
 	"testing"
@@ -11,6 +13,7 @@ import (
 
 	"github.com/sadopc/godu/internal/model"
 	"github.com/sadopc/godu/internal/scanner"
+	"golang.org/x/crypto/ssh"
 )
 
 func TestScanWithClient_FiltersHiddenAndExcluded(t *testing.T) {
@@ -116,6 +119,161 @@ func TestScanWithClient_BrokenSymlinkGetsErrorFlag(t *testing.T) {
 	}
 }
 
+func TestScanWithClient_ReadDirError_SetsFlagError(t *testing.T) {
+	client := newFakeSFTP(map[string]fakeNode{
+		"/root":        {mode: os.ModeDir, children: []string{"denied"}},
+		"/root/denied": {mode: os.ModeDir, errOnRead: true},
+	})
+
+	s := &SFTPScanner{cfg: Config{Target: "user@host", Port: 22}, dial: fakeDial(client)}
+	root, err := s.Scan(context.Background(), "/root", scanner.ScanOptions{
+		ShowHidden: true,
+	}, nil)
+	if err != nil {
+		t.Fatalf("scan failed: %v", err)
+	}
+
+	denied := findNode(root, "denied")
+	if denied == nil {
+		t.Fatal("expected denied dir node")
+	}
+	if denied.GetFlag()&model.FlagError == 0 {
+		t.Fatal("expected FlagError on permission-denied directory")
+	}
+}
+
+func TestScanWithClient_UsageUsesBlockEstimate(t *testing.T) {
+	client := newFakeSFTP(map[string]fakeNode{
+		"/root":          {mode: os.ModeDir, children: []string{"tiny.txt"}},
+		"/root/tiny.txt": {mode: 0, size: 1},
+	})
+
+	s := &SFTPScanner{cfg: Config{Target: "user@host", Port: 22}, dial: fakeDial(client)}
+	root, err := s.Scan(context.Background(), "/root", scanner.ScanOptions{
+		ShowHidden: true,
+	}, nil)
+	if err != nil {
+		t.Fatalf("scan failed: %v", err)
+	}
+
+	tiny := findNode(root, "tiny.txt")
+	if tiny == nil {
+		t.Fatal("expected tiny.txt node")
+	}
+	if tiny.GetSize() != 1 {
+		t.Fatalf("expected size 1, got %d", tiny.GetSize())
+	}
+	if tiny.GetUsage() != remoteBlockSize {
+		t.Fatalf("expected usage %d, got %d", remoteBlockSize, tiny.GetUsage())
+	}
+	if root.GetUsage() != remoteBlockSize {
+		t.Fatalf("expected root usage %d, got %d", remoteBlockSize, root.GetUsage())
+	}
+}
+
+func TestScanWithClient_SymlinkInsideScanRoot_NotDoubleScanned(t *testing.T) {
+	// dir-link points to /root/dir (inside scan root) — should skip recursion
+	client := newFakeSFTP(map[string]fakeNode{
+		"/root":              {mode: os.ModeDir, children: []string{"dir", "dir-link"}},
+		"/root/dir":          {mode: os.ModeDir, children: []string{"item.txt"}},
+		"/root/dir/item.txt": {mode: 0, size: 10},
+		"/root/dir-link":     {mode: os.ModeSymlink, target: "/root/dir"},
+	})
+
+	s := &SFTPScanner{cfg: Config{Target: "user@host", Port: 22}, dial: fakeDial(client)}
+	root, err := s.Scan(context.Background(), "/root", scanner.ScanOptions{
+		ShowHidden:     true,
+		FollowSymlinks: true,
+	}, nil)
+	if err != nil {
+		t.Fatalf("scan failed: %v", err)
+	}
+
+	// Size should be 10, not 20 (no double-counting)
+	if root.GetSize() != 10 {
+		t.Fatalf("expected root size 10 (no double-count), got %d", root.GetSize())
+	}
+}
+
+func TestIsWithinRemote(t *testing.T) {
+	tests := []struct {
+		root, target string
+		want         bool
+	}{
+		{"/root", "/root", true},
+		{"/root", "/root/sub", true},
+		{"/root", "/root/sub/deep", true},
+		{"/root", "/other", false},
+		{"/root", "/rootmore", false},
+		{"/root", "/roo", false},
+		{"/root", "/..", false},
+	}
+	for _, tt := range tests {
+		got := isWithinRemote(tt.root, tt.target)
+		if got != tt.want {
+			t.Errorf("isWithinRemote(%q, %q) = %v, want %v", tt.root, tt.target, got, tt.want)
+		}
+	}
+}
+
+func TestEstimateDiskUsage(t *testing.T) {
+	tests := []struct {
+		size int64
+		want int64
+	}{
+		{size: 0, want: 0},
+		{size: -1, want: 0},
+		{size: 1, want: remoteBlockSize},
+		{size: remoteBlockSize, want: remoteBlockSize},
+		{size: remoteBlockSize + 1, want: 2 * remoteBlockSize},
+	}
+
+	for _, tt := range tests {
+		if got := estimateDiskUsage(tt.size); got != tt.want {
+			t.Fatalf("estimateDiskUsage(%d) = %d, want %d", tt.size, got, tt.want)
+		}
+	}
+}
+
+func TestConnectSSH_RespectsContextCancellation(t *testing.T) {
+	origDial := dialContext
+	origNewClientConn := sshNewClientConn
+	t.Cleanup(func() {
+		dialContext = origDial
+		sshNewClientConn = origNewClientConn
+	})
+
+	dialCalled := false
+	handshakeCalled := false
+
+	dialContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
+		dialCalled = true
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	sshNewClientConn = func(net.Conn, string, *ssh.ClientConfig) (ssh.Conn, <-chan ssh.NewChannel, <-chan *ssh.Request, error) {
+		handshakeCalled = true
+		return nil, nil, nil, errors.New("unexpected handshake call")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := connectSSH(ctx, "example.com:22", &ssh.ClientConfig{
+		User:            "user",
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+	if !dialCalled {
+		t.Fatal("expected dial to be called")
+	}
+	if handshakeCalled {
+		t.Fatal("did not expect SSH handshake to start after canceled dial")
+	}
+}
+
 func fakeDial(client sftpClient) func(context.Context, Config) (sftpClient, io.Closer, error) {
 	return func(context.Context, Config) (sftpClient, io.Closer, error) {
 		return client, noopCloser{}, nil
@@ -155,11 +313,12 @@ func findNode(root *model.DirNode, parts ...string) model.TreeNode {
 }
 
 type fakeNode struct {
-	mode     os.FileMode
-	size     int64
-	mtime    time.Time
-	target   string
-	children []string
+	mode      os.FileMode
+	size      int64
+	mtime     time.Time
+	target    string
+	children  []string
+	errOnRead bool // if true, ReadDir returns an error
 }
 
 type fakeSFTP struct {
@@ -184,6 +343,9 @@ func (f *fakeSFTP) ReadDir(path string) ([]os.FileInfo, error) {
 	}
 	if !node.mode.IsDir() {
 		return nil, fmt.Errorf("not a directory")
+	}
+	if node.errOnRead {
+		return nil, fmt.Errorf("permission denied")
 	}
 
 	out := make([]os.FileInfo, 0, len(node.children))

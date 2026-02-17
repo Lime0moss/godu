@@ -1,10 +1,12 @@
 package ops
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/sadopc/godu/internal/model"
@@ -63,24 +65,38 @@ func (ew *errWriter) Write(data []byte) (int, error) {
 }
 
 // ExportJSON exports the tree to ncdu-compatible JSON format.
+// For file targets (not stdout), writes to a temp file first and atomically
+// renames on success, so a partial file is never left behind on error.
 func ExportJSON(root *model.DirNode, path string, version string) (retErr error) {
-	var out io.Writer
 	if path == "-" {
-		out = os.Stdout
-	} else {
-		f, err := os.Create(path)
-		if err != nil {
-			return fmt.Errorf("cannot create export file: %w", err)
-		}
-		defer func() {
-			if closeErr := f.Close(); closeErr != nil && retErr == nil {
-				retErr = closeErr
-			}
-		}()
-		out = f
+		return exportToWriter(root, os.Stdout, version)
 	}
 
-	ew := &errWriter{w: out}
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".godu-export-*.tmp")
+	if err != nil {
+		return fmt.Errorf("cannot create export file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	defer func() {
+		if retErr != nil {
+			tmp.Close()
+			os.Remove(tmpPath)
+		}
+	}()
+
+	if err := exportToWriter(root, tmp, version); err != nil {
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
+}
+
+func exportToWriter(root *model.DirNode, out io.Writer, version string) error {
+	bw := bufio.NewWriterSize(out, 64*1024)
+	ew := &errWriter{w: bw}
 
 	// Write opening bracket and header
 	ew.WriteString("[1, 0, ")
@@ -103,7 +119,10 @@ func ExportJSON(root *model.DirNode, path string, version string) (retErr error)
 	writeDir(ew, root)
 
 	ew.WriteString("\n]\n")
-	return ew.err
+	if ew.err != nil {
+		return ew.err
+	}
+	return bw.Flush()
 }
 
 func writeDir(ew *errWriter, dir *model.DirNode) {
@@ -120,6 +139,15 @@ func writeDir(ew *errWriter, dir *model.DirNode) {
 		Asize: dir.GetSize(),
 		Dsize: dir.GetUsage(),
 	}
+	if dir.Flag&model.FlagHardlink != 0 {
+		entry.Hlnkc = true
+	}
+	if dir.Flag&model.FlagError != 0 {
+		entry.Err = true
+	}
+	if dir.Flag&model.FlagSymlink != 0 {
+		entry.Symlink = true
+	}
 	data, err := json.Marshal(entry)
 	if err != nil {
 		ew.err = err
@@ -127,7 +155,7 @@ func writeDir(ew *errWriter, dir *model.DirNode) {
 	}
 	_, _ = ew.Write(data)
 
-	children := dir.GetChildren()
+	children := dir.ReadChildren()
 	for _, child := range children {
 		if ew.err != nil {
 			return

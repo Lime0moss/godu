@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -58,5 +59,57 @@ func TestExportJSON_Stdout(t *testing.T) {
 	}
 	if len(raw) < 4 {
 		t.Fatalf("expected ncdu format array with >=4 elements, got %d", len(raw))
+	}
+}
+
+func TestExportJSON_AtomicNoPartialFile(t *testing.T) {
+	tmp := t.TempDir()
+	target := filepath.Join(tmp, "output.json")
+
+	// Export a valid tree — file should exist after success
+	root := &model.DirNode{FileNode: model.FileNode{Name: "/root"}}
+	root.AddChild(&model.FileNode{Name: "a.txt", Size: 1, Usage: 1, Parent: root})
+	root.UpdateSize()
+
+	if err := ExportJSON(root, target, "test"); err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	if _, err := os.Stat(target); err != nil {
+		t.Fatalf("expected output file to exist: %v", err)
+	}
+
+	// Re-import to verify valid JSON
+	reimported, err := ImportJSON(target)
+	if err != nil {
+		t.Fatalf("re-import: %v", err)
+	}
+	if reimported.GetSize() != 1 {
+		t.Fatalf("expected size 1, got %d", reimported.GetSize())
+	}
+}
+
+func TestExportJSON_DirFlags(t *testing.T) {
+	root := &model.DirNode{FileNode: model.FileNode{Name: "/root"}}
+	root.AddChild(&model.DirNode{
+		FileNode: model.FileNode{
+			Name:   "errdir",
+			Flag:   model.FlagError,
+			Parent: root,
+		},
+	})
+	root.UpdateSizeRecursive()
+
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "flags.json")
+	if err := ExportJSON(root, path, "test"); err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"read_error":true`) {
+		t.Fatalf("expected read_error flag in export: %s", data)
 	}
 }

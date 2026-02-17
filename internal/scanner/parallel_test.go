@@ -3,8 +3,10 @@ package scanner
 import (
 	"context"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/sadopc/godu/internal/model"
@@ -182,5 +184,122 @@ func TestScan_FollowSymlinks_BrokenSymlinkPlaceholder(t *testing.T) {
 	}
 	if broken.GetFlag()&model.FlagError == 0 {
 		t.Fatal("expected broken symlink placeholder to include FlagError")
+	}
+}
+
+func TestScan_PermissionDeniedDir_FlagError(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod 0o000 not effective on Windows")
+	}
+	if os.Getuid() == 0 {
+		t.Skip("running as root — permission checks are bypassed")
+	}
+
+	root := t.TempDir()
+	denied := filepath.Join(root, "noperm")
+	if err := os.Mkdir(denied, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(denied, "secret.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(denied, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(denied, 0o755); err != nil {
+			t.Logf("cleanup chmod failed for %s: %v", denied, err)
+		}
+	})
+
+	s := NewParallelScanner()
+	result, err := s.Scan(context.Background(), root, ScanOptions{ShowHidden: true}, nil)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	var deniedNode model.TreeNode
+	for _, child := range result.GetChildren() {
+		if child.GetName() == "noperm" {
+			deniedNode = child
+			break
+		}
+	}
+	if deniedNode == nil {
+		t.Fatal("expected noperm directory to be present")
+	}
+	if deniedNode.GetFlag()&model.FlagError == 0 {
+		t.Fatal("expected FlagError on permission-denied directory")
+	}
+}
+
+func TestScan_SkipsUnixSocket(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix sockets not available on Windows")
+	}
+
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "regular.txt"), []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	sockPath := filepath.Join(root, "test.sock")
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Skipf("cannot create unix socket: %v", err)
+	}
+	defer ln.Close()
+
+	s := NewParallelScanner()
+	result, err := s.Scan(context.Background(), root, ScanOptions{ShowHidden: true}, nil)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	for _, child := range result.GetChildren() {
+		if child.GetName() == "test.sock" {
+			t.Fatal("expected unix socket to be filtered out")
+		}
+	}
+	found := false
+	for _, child := range result.GetChildren() {
+		if child.GetName() == "regular.txt" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("expected regular file to be present")
+	}
+}
+
+func TestScan_FollowSymlinks_SkipsSymlinkToUnixSocket(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix sockets not available on Windows")
+	}
+
+	root := t.TempDir()
+
+	sockPath := filepath.Join(root, "target.sock")
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Skipf("cannot create unix socket: %v", err)
+	}
+	defer ln.Close()
+
+	linkPath := filepath.Join(root, "alias.sock")
+	if err := os.Symlink("target.sock", linkPath); err != nil {
+		t.Skipf("symlink not available on this platform: %v", err)
+	}
+
+	s := NewParallelScanner()
+	result, err := s.Scan(context.Background(), root, ScanOptions{ShowHidden: true, FollowSymlinks: true}, nil)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	for _, child := range result.GetChildren() {
+		if child.GetName() == "alias.sock" {
+			t.Fatal("expected symlink to unix socket to be filtered out")
+		}
 	}
 }
