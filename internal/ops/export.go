@@ -32,8 +32,9 @@ type ncduEntry struct {
 	Dsize int64  `json:"dsize,omitempty"`
 	Ino   uint64 `json:"ino,omitempty"`
 	Nlink int    `json:"nlink,omitempty"`
-	Hlnkc bool   `json:"hlnkc,omitempty"`
-	Err   bool   `json:"read_error,omitempty"`
+	Hlnkc   bool `json:"hlnkc,omitempty"`
+	Err     bool `json:"read_error,omitempty"`
+	Symlink bool `json:"symlink,omitempty"`
 }
 
 // errWriter wraps an *os.File and captures the first write/seek error.
@@ -150,6 +151,9 @@ func writeDir(ew *errWriter, dir *model.DirNode) {
 			}
 			if c.Flag&model.FlagError != 0 {
 				entry.Err = true
+			}
+			if c.Flag&model.FlagSymlink != 0 {
+				entry.Symlink = true
 			}
 			data, err := json.Marshal(entry)
 			if err != nil {

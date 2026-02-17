@@ -86,6 +86,15 @@ func TestE2E_HeadlessExportImportRoundTrip(t *testing.T) {
 		t.Fatal("expected hidden file to be present in default export")
 	}
 
+	// Verify symlink flag survives export/import round-trip
+	linkNode := findNode(imported, "keep", "link.txt")
+	if linkNode == nil {
+		t.Fatal("expected keep/link.txt symlink to exist in imported tree")
+	}
+	if linkNode.GetFlag()&model.FlagSymlink == 0 {
+		t.Fatal("expected FlagSymlink to be preserved after export/import round-trip")
+	}
+
 	reExportPath := filepath.Join(t.TempDir(), "rescan.json")
 	result = runCLI(t, "--import", exportPath, "--export", reExportPath)
 	if result.exitCode != 0 {
@@ -192,6 +201,11 @@ func createScanFixture(t *testing.T) string {
 	mustWriteFile(t, filepath.Join(root, "skip-one", "ignored.log"), "ignore me")
 	mustWriteFile(t, filepath.Join(root, "skip-two", "ignored.log"), "ignore me too")
 	mustWriteFile(t, filepath.Join(root, ".hidden.txt"), "top secret")
+
+	// Symlink for round-trip metadata test
+	if err := os.Symlink(filepath.Join(root, "keep", "a.txt"), filepath.Join(root, "keep", "link.txt")); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
 
 	return root
 }

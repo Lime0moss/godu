@@ -32,9 +32,9 @@ Homebrew tap repo: `sadopc/homebrew-tap` (installed via `brew tap sadopc/tap`). 
 - **`scanner`** — Goroutine-per-directory with semaphore (`3 * GOMAXPROCS`). Progress via atomic counters, sent on a ticker channel every 50ms. Hardlink dedup via inode map (also used with `--follow-symlinks` to dedup file+symlink aliases regardless of `Nlink`). Broken symlinks produce zero-size placeholder nodes with `FlagSymlink|FlagError`. Hidden file filtering (`ShowHidden: false`) is enforced at scan time, not just in the UI. After `wg.Wait()`, `updateSizeRecursive()` does a single-threaded bottom-up size calculation — this ordering is critical.
 - **`ui`** — Bubble Tea state machine with `AppState` (Scanning/Browsing/ConfirmDelete/Help/Exporting) and `ViewMode` (Tree/Treemap/FileType). Progress from scanner flows through a mutex-protected `latestProgress` snapshot read by `tickMsg` handler. `App` separates `fatalErr` (scan/import failures surfaced to stderr on exit via `FatalError()`) from `statusMsg` (transient UI messages like delete results).
 - **`ui/style`** — `Theme` struct (colors + lipgloss styles) and `Layout` (dimension math). `rowOverhead()` returns 23 — the fixed character width consumed by indicator, percentage, brackets, spacing, and size column in each tree row.
-- **`ui/components`** — Stateless render functions. `TreeView` is a struct with `Render()` + `EnsureVisible()` for virtual scrolling. Others are pure functions (`RenderTreemap`, `RenderFileTypes`, `RenderHelp`, etc.).
-- **`ops`** — Delete (boundary-enforced, blocks paths outside scan root and resolves symlinks on parent), Export/Import (ncdu-compatible nested JSON arrays). Delete is disabled in import mode via gate in `app.go`.
-- **`util`** — `FormatSize()` (human-readable bytes), `FormatCount()` (K/M/B notation), emoji icons for file extensions.
+- **`ui/components`** — Mostly stateless render functions. `TreeView` is a struct with `Render()` + `EnsureVisible()` for virtual scrolling. `RenderFileTypes` caches aggregation results (keyed by dir pointer + useApparent + showHidden) to avoid full tree walks on every render. Others are pure functions (`RenderTreemap`, `RenderHelp`, etc.).
+- **`ops`** — Delete, Export/Import. Delete is boundary-enforced: resolves symlinks on the parent directory, constructs `realPath = Join(resolvedParent, Base(absPath))`, validates it's inside the scan root, then operates on `realPath` (not the original `absPath`) to prevent TOCTOU attacks. Export/Import uses ncdu-compatible nested JSON arrays. Delete is disabled in import mode via gate in `app.go`.
+- **`util`** — `FormatSize()` (human-readable bytes with binary prefixes KiB/MiB/GiB), `FormatCount()` (K/M/B notation), emoji icons for file extensions. `TruncateString` uses `charmbracelet/x/ansi.Truncate` (indirect dep via `style/layout.go`).
 
 ### Key patterns
 
@@ -57,3 +57,14 @@ All scanner options are CLI-exposed: `--hidden`/`--no-hidden`, `--no-gc`, `--exc
 1. **Interactive TUI** (default): `godu /path` — scan with progress, browse tree
 2. **Headless export**: `godu --export scan.json /path` — scan, write JSON, exit (no TUI)
 3. **Import browse**: `godu --import scan.json` — load JSON, browse without rescanning
+
+## Release workflow
+
+No CI/CD — releases are manual. Steps:
+
+1. `git tag vX.Y.Z && git push origin vX.Y.Z`
+2. `make release` — builds 4 binaries: `godu-{darwin,linux}-{arm64,amd64}`
+3. Create tarballs: `tar czf godu-vX.Y.Z-<platform>.tar.gz godu-<platform>`
+4. `gh release create vX.Y.Z *.tar.gz godu-darwin-* godu-linux-*` — upload both raw binaries and tarballs
+5. Get SHA256 of raw binaries: `shasum -a 256 godu-darwin-* godu-linux-*`
+6. Update `sadopc/homebrew-tap` → `Formula/godu.rb` with new version, URLs, and SHA256 hashes (formula uses raw binaries, not tarballs)

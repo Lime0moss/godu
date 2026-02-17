@@ -29,6 +29,12 @@ type ftCache struct {
 
 var lastFTCache ftCache
 
+// InvalidateFileTypeCache clears the cached file type aggregation,
+// forcing a recompute on the next render.
+func InvalidateFileTypeCache() {
+	lastFTCache = ftCache{}
+}
+
 // RenderFileTypes renders the file type breakdown view.
 func RenderFileTypes(theme style.Theme, dir *model.DirNode, useApparent bool, showHidden bool, width, height int) string {
 	if dir == nil {

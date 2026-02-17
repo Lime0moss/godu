@@ -74,12 +74,24 @@ func (tv *TreeView) renderRow(item model.TreeNode, selected, marked bool, barWid
 	ratio := pct / 100.0
 	bar := tv.Theme.BarGradient(barWidth, ratio)
 
-	// Name (truncated to fit)
+	// Name (truncated to fit, reserving space for flag suffixes)
 	name := item.GetName()
 	if item.IsDir() {
 		name += "/"
 	}
-	name = util.TruncateString(name, nameWidth)
+	flag := item.GetFlag()
+	flagWidth := 0
+	if flag&model.FlagError != 0 {
+		flagWidth += 2 // " !"
+	}
+	if flag&model.FlagSymlink != 0 {
+		flagWidth += 3 // " ->"
+	}
+	effectiveNameWidth := nameWidth - flagWidth
+	if effectiveNameWidth < 1 {
+		effectiveNameWidth = 1
+	}
+	name = util.TruncateString(name, effectiveNameWidth)
 
 	// Cursor / mark indicator (2 chars)
 	indicator := "  "
@@ -102,8 +114,7 @@ func (tv *TreeView) renderRow(item model.TreeNode, selected, marked bool, barWid
 		nameStyled = tv.Theme.FileName.Render(name)
 	}
 
-	// Flag indicators (appended to name but counted in nameWidth)
-	flag := item.GetFlag()
+	// Flag indicators (width already reserved above)
 	if flag&model.FlagError != 0 {
 		nameStyled += tv.Theme.ErrorText.Render(" !")
 	}

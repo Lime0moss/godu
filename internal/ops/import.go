@@ -128,6 +128,9 @@ func parseDir(data json.RawMessage, parent *model.DirNode) (*model.DirNode, erro
 			if fileEntry.Err {
 				flag |= model.FlagError
 			}
+			if fileEntry.Symlink {
+				flag |= model.FlagSymlink
+			}
 
 			fileNode := &model.FileNode{
 				Name:   fileEntry.Name,

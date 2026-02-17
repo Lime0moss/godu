@@ -193,6 +193,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for _, name := range msg.Deleted {
 			a.currentDir.RemoveChild(name)
 		}
+		components.InvalidateFileTypeCache()
 		a.state = StateBrowsing
 		a.clearMarks()
 		a.refreshSorted()
