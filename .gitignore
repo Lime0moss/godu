@@ -25,3 +25,6 @@ godu-export.json
 # Original screenshots (PNGs are in screenshots/)
 *.heic
 2-treemap.png
+
+AGENTS.md
+CLAUDE.md
