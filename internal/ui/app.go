@@ -352,7 +352,7 @@ func (a *App) View() string {
 }
 
 func (a *App) renderBrowsing() string {
-	header := components.RenderHeader(a.theme, a.root, a.width)
+	header := components.RenderHeader(a.theme, a.root, a.useApparent, a.width)
 	breadcrumb := components.RenderBreadcrumb(a.theme, a.currentDir, a.width)
 	tabBar := components.RenderTabBar(a.theme, int(a.viewMode), a.sortConfig.Field, a.width)
 

@@ -11,7 +11,7 @@ import (
 )
 
 // RenderHeader renders the top header bar.
-func RenderHeader(theme style.Theme, root *model.DirNode, width int) string {
+func RenderHeader(theme style.Theme, root *model.DirNode, useApparent bool, width int) string {
 	if root == nil || width < 10 {
 		return ""
 	}
@@ -19,9 +19,13 @@ func RenderHeader(theme style.Theme, root *model.DirNode, width int) string {
 	titleStr := " godu"
 	titleStyled := lipgloss.NewStyle().Bold(true).Foreground(theme.Primary).Render(titleStr)
 
+	size := root.GetSize()
+	if !useApparent {
+		size = root.GetUsage()
+	}
 	stats := fmt.Sprintf("%s items  %s ",
 		util.FormatCount(root.ItemCount),
-		util.FormatSize(root.GetSize()),
+		util.FormatSize(size),
 	)
 	statsStyled := lipgloss.NewStyle().Foreground(theme.TextMuted).Render(stats)
 

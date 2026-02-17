@@ -19,13 +19,29 @@ type CategoryStats struct {
 	TopExts   map[string]int64
 }
 
+// ftCache caches the result of aggregateFileTypes to avoid recomputing on every render.
+type ftCache struct {
+	dir         *model.DirNode
+	useApparent bool
+	showHidden  bool
+	stats       []CategoryStats
+}
+
+var lastFTCache ftCache
+
 // RenderFileTypes renders the file type breakdown view.
 func RenderFileTypes(theme style.Theme, dir *model.DirNode, useApparent bool, showHidden bool, width, height int) string {
 	if dir == nil {
 		return ""
 	}
 
-	stats := aggregateFileTypes(dir, useApparent, showHidden)
+	var stats []CategoryStats
+	if lastFTCache.dir == dir && lastFTCache.useApparent == useApparent && lastFTCache.showHidden == showHidden {
+		stats = lastFTCache.stats
+	} else {
+		stats = aggregateFileTypes(dir, useApparent, showHidden)
+		lastFTCache = ftCache{dir: dir, useApparent: useApparent, showHidden: showHidden, stats: stats}
+	}
 
 	sort.Slice(stats, func(i, j int) bool {
 		return stats[i].TotalSize > stats[j].TotalSize

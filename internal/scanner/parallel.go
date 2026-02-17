@@ -223,8 +223,10 @@ func (s *ParallelScanner) scanDir(
 
 		if entry.IsDir() {
 			scanPath := fullPath
-			if resolvedPath, err := filepath.EvalSymlinks(fullPath); err == nil {
-				scanPath = resolvedPath
+			if opts.FollowSymlinks {
+				if resolvedPath, err := filepath.EvalSymlinks(fullPath); err == nil {
+					scanPath = resolvedPath
+				}
 			}
 
 			childDir := &model.DirNode{

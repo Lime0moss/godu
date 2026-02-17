@@ -139,7 +139,7 @@ func RenderTreemap(theme style.Theme, dir *model.DirNode, useApparent bool, show
 				s := lipgloss.NewStyle().Background(color)
 				line.WriteString(s.Render(" "))
 			} else {
-				s := lipgloss.NewStyle().Foreground(theme.TextPrimary)
+				s := lipgloss.NewStyle().Foreground(theme.TextPrimary).Background(color)
 				line.WriteString(s.Render(string(ch)))
 			}
 		}

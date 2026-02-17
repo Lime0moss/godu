@@ -18,7 +18,7 @@ make release                                    # cross-compile darwin/linux arm
 
 Requires **Go 1.25.7+**. Version is injected at build time via `-ldflags "-X main.version=$(VERSION)"` using git describe.
 
-Test files exist in `cmd/godu/` (E2E), `internal/scanner/`, `internal/ops/`, and `internal/ui/components/`. Tests use `t.TempDir()` for filesystem operations. E2E tests in `cmd/godu/main_e2e_test.go` use a helper-process pattern to test CLI flags, export/import round-trips, and error handling.
+Test files exist in `cmd/godu/` (E2E), `internal/scanner/`, `internal/ops/`, `internal/ui/`, and `internal/ui/components/`. Tests use `t.TempDir()` for filesystem operations. E2E tests in `cmd/godu/main_e2e_test.go` use a helper-process pattern to test CLI flags, export/import round-trips, and error handling.
 
 Homebrew tap repo: `sadopc/homebrew-tap` (installed via `brew tap sadopc/tap`). Formula at `Formula/godu.rb` — update SHA256 hashes and version when cutting a new release.
 
@@ -29,8 +29,8 @@ Homebrew tap repo: `sadopc/homebrew-tap` (installed via `brew tap sadopc/tap`). 
 ### Packages
 
 - **`model`** — `FileNode`, `DirNode`, `TreeNode` interface. Paths are reconstructed by walking `Parent *DirNode` pointers (not stored per-node). Size vs Usage: apparent file size vs actual disk blocks (`stat.Blocks * 512`).
-- **`scanner`** — Goroutine-per-directory with semaphore (`3 * GOMAXPROCS`). Progress via atomic counters, sent on a ticker channel every 50ms. Hardlink dedup via inode map. After `wg.Wait()`, `updateSizeRecursive()` does a single-threaded bottom-up size calculation — this ordering is critical.
-- **`ui`** — Bubble Tea state machine with `AppState` (Scanning/Browsing/ConfirmDelete/Help/Exporting) and `ViewMode` (Tree/Treemap/FileType). Progress from scanner flows through a mutex-protected `latestProgress` snapshot read by `tickMsg` handler.
+- **`scanner`** — Goroutine-per-directory with semaphore (`3 * GOMAXPROCS`). Progress via atomic counters, sent on a ticker channel every 50ms. Hardlink dedup via inode map (also used with `--follow-symlinks` to dedup file+symlink aliases regardless of `Nlink`). Broken symlinks produce zero-size placeholder nodes with `FlagSymlink|FlagError`. Hidden file filtering (`ShowHidden: false`) is enforced at scan time, not just in the UI. After `wg.Wait()`, `updateSizeRecursive()` does a single-threaded bottom-up size calculation — this ordering is critical.
+- **`ui`** — Bubble Tea state machine with `AppState` (Scanning/Browsing/ConfirmDelete/Help/Exporting) and `ViewMode` (Tree/Treemap/FileType). Progress from scanner flows through a mutex-protected `latestProgress` snapshot read by `tickMsg` handler. `App` separates `fatalErr` (scan/import failures surfaced to stderr on exit via `FatalError()`) from `statusMsg` (transient UI messages like delete results).
 - **`ui/style`** — `Theme` struct (colors + lipgloss styles) and `Layout` (dimension math). `rowOverhead()` returns 23 — the fixed character width consumed by indicator, percentage, brackets, spacing, and size column in each tree row.
 - **`ui/components`** — Stateless render functions. `TreeView` is a struct with `Render()` + `EnsureVisible()` for virtual scrolling. Others are pure functions (`RenderTreemap`, `RenderFileTypes`, `RenderHelp`, etc.).
 - **`ops`** — Delete (boundary-enforced, blocks paths outside scan root and resolves symlinks on parent), Export/Import (ncdu-compatible nested JSON arrays). Delete is disabled in import mode via gate in `app.go`.

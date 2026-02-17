@@ -43,13 +43,13 @@ func Delete(path string, rootPath string) error {
 		return fmt.Errorf("refusing to delete %s: outside scan root %s", absPath, absRoot)
 	}
 
-	info, err := os.Lstat(absPath)
+	info, err := os.Lstat(realPath)
 	if err != nil {
-		return fmt.Errorf("cannot access %s: %w", absPath, err)
+		return fmt.Errorf("cannot access %s: %w", realPath, err)
 	}
 
 	if info.IsDir() {
-		return os.RemoveAll(absPath)
+		return os.RemoveAll(realPath)
 	}
-	return os.Remove(absPath)
+	return os.Remove(realPath)
 }
