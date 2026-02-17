@@ -299,15 +299,18 @@ func (a *App) handleBrowsingKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		a.refreshSorted()
 	case key.Matches(msg, a.keys.ToggleHidden):
 		a.showHidden = !a.showHidden
-		a.ScanOptions.ShowHidden = a.showHidden
 		a.clearMarks()
 		a.refreshSorted()
 
 	case key.Matches(msg, a.keys.Mark):
-		a.toggleMark()
+		if a.viewMode == ViewTree {
+			a.toggleMark()
+		}
 
 	case key.Matches(msg, a.keys.Delete):
-		return a, a.prepareDelete()
+		if a.viewMode == ViewTree {
+			return a, a.prepareDelete()
+		}
 
 	case key.Matches(msg, a.keys.Export):
 		return a, a.exportCmd()
@@ -377,6 +380,7 @@ func (a *App) renderBrowsing() string {
 
 	statusInfo := components.StatusInfo{
 		CurrentDir:  a.currentDir,
+		ItemCount:   len(a.sortedItems),
 		MarkedCount: len(a.marked),
 		UseApparent: a.useApparent,
 		ShowHidden:  a.showHidden,
@@ -387,7 +391,11 @@ func (a *App) renderBrowsing() string {
 	for markedPath := range a.marked {
 		for _, item := range a.sortedItems {
 			if item.Path() == markedPath {
-				statusInfo.MarkedSize += item.GetSize()
+				if a.useApparent {
+					statusInfo.MarkedSize += item.GetSize()
+				} else {
+					statusInfo.MarkedSize += item.GetUsage()
+				}
 			}
 		}
 	}

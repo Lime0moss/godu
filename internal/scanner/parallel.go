@@ -209,11 +209,6 @@ func (s *ParallelScanner) scanDir(
 
 		name := entry.Name()
 
-		// Skip hidden files if not showing them
-		if !opts.ShowHidden && strings.HasPrefix(name, ".") {
-			continue
-		}
-
 		// Skip excluded patterns
 		if excludeSet[name] {
 			continue
@@ -289,10 +284,33 @@ func (s *ParallelScanner) scanDir(
 
 			var inode uint64
 			var diskUsage int64
+			flag := model.FlagSymlink
 
 			if stat, ok := info.Sys().(*syscall.Stat_t); ok {
 				inode = stat.Ino
 				diskUsage = int64(stat.Blocks) * 512
+
+				// Dedup: symlink target may alias a regular file (even with Nlink==1)
+				inodeMu.Lock()
+				ik := inodeKey{dev: uint64(stat.Dev), ino: stat.Ino}
+				if inodeMap[ik] {
+					flag |= model.FlagHardlink
+					inodeMu.Unlock()
+					fileNode := &model.FileNode{
+						Name:   name,
+						Size:   0,
+						Usage:  0,
+						Mtime:  info.ModTime(),
+						Inode:  inode,
+						Flag:   flag,
+						Parent: parent,
+					}
+					parent.AddChild(fileNode)
+					filesScanned.Add(1)
+					continue
+				}
+				inodeMap[ik] = true
+				inodeMu.Unlock()
 			} else {
 				diskUsage = info.Size()
 			}
@@ -303,7 +321,7 @@ func (s *ParallelScanner) scanDir(
 				Usage:  diskUsage,
 				Mtime:  info.ModTime(),
 				Inode:  inode,
-				Flag:   model.FlagSymlink,
+				Flag:   flag,
 				Parent: parent,
 			}
 			parent.AddChild(fileNode)

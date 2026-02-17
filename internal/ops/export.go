@@ -126,7 +126,7 @@ func writeDir(ew *errWriter, dir *model.DirNode) {
 		ew.err = err
 		return
 	}
-	ew.Write(data)
+	_, _ = ew.Write(data)
 
 	children := dir.GetChildren()
 	for _, child := range children {
@@ -156,7 +156,7 @@ func writeDir(ew *errWriter, dir *model.DirNode) {
 				ew.err = err
 				return
 			}
-			ew.Write(data)
+			_, _ = ew.Write(data)
 		}
 	}
 

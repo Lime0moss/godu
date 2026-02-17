@@ -13,8 +13,12 @@ func TestScan_CanceledContext_ReturnsError(t *testing.T) {
 	// Create some files to scan
 	for i := 0; i < 10; i++ {
 		sub := filepath.Join(root, "dir"+string(rune('a'+i)))
-		os.Mkdir(sub, 0755)
-		os.WriteFile(filepath.Join(sub, "file.txt"), []byte("data"), 0644)
+		if err := os.Mkdir(sub, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(sub, "file.txt"), []byte("data"), 0644); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -33,7 +37,9 @@ func TestScan_CanceledContext_ReturnsError(t *testing.T) {
 
 func TestScan_NormalCompletion(t *testing.T) {
 	root := t.TempDir()
-	os.WriteFile(filepath.Join(root, "hello.txt"), []byte("hello"), 0644)
+	if err := os.WriteFile(filepath.Join(root, "hello.txt"), []byte("hello"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	s := NewParallelScanner()
 	result, err := s.Scan(context.Background(), root, ScanOptions{ShowHidden: true}, nil)

@@ -13,6 +13,7 @@ import (
 // StatusInfo holds the current state for the status bar.
 type StatusInfo struct {
 	CurrentDir  *model.DirNode
+	ItemCount   int
 	MarkedCount int
 	MarkedSize  int64
 	UseApparent bool
@@ -32,8 +33,7 @@ func RenderStatusBar(theme style.Theme, info StatusInfo, width int) string {
 	var parts []string
 
 	if info.CurrentDir != nil {
-		count := len(info.CurrentDir.GetChildren())
-		parts = append(parts, fmt.Sprintf("%d items", count))
+		parts = append(parts, fmt.Sprintf("%d items", info.ItemCount))
 
 		var size int64
 		if info.UseApparent {
