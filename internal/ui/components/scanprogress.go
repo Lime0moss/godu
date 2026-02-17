@@ -12,10 +12,7 @@ import (
 
 // RenderScanProgress renders the scanning progress overlay.
 func RenderScanProgress(theme style.Theme, progress scanner.Progress, width, height int) string {
-	boxWidth := 50
-	if boxWidth > width-4 {
-		boxWidth = width - 4
-	}
+	boxWidth := min(50, max(width-4, 1))
 
 	var lines []string
 

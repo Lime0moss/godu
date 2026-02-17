@@ -64,7 +64,7 @@ func RenderFileTypes(theme style.Theme, dir *model.DirNode, useApparent bool, sh
 	)
 	lines = append(lines, hdrStyle.Render(header))
 
-	sep := lipgloss.NewStyle().Foreground(theme.TextMuted).Render("  " + strings.Repeat("-", width-4))
+	sep := lipgloss.NewStyle().Foreground(theme.TextMuted).Render("  " + strings.Repeat("-", max(width-4, 0)))
 	lines = append(lines, sep)
 
 	for _, s := range stats {

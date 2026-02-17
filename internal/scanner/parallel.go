@@ -149,6 +149,9 @@ func (s *ParallelScanner) Scan(ctx context.Context, path string, opts ScanOption
 		}
 	}
 
+	if err := ctx.Err(); err != nil {
+		return root, err
+	}
 	return root, nil
 }
 

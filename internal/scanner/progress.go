@@ -4,8 +4,6 @@ import "time"
 
 // Progress reports scanning progress.
 type Progress struct {
-	// CurrentPath is the directory currently being scanned.
-	CurrentPath string
 	// FilesScanned is the total files scanned so far.
 	FilesScanned int64
 	// DirsScanned is the total directories scanned so far.

@@ -10,10 +10,7 @@ import (
 
 // RenderHelp renders the help overlay.
 func RenderHelp(theme style.Theme, width, height int) string {
-	boxWidth := 60
-	if boxWidth > width-4 {
-		boxWidth = width - 4
-	}
+	boxWidth := min(60, max(width-4, 1))
 
 	title := theme.ModalTitle.Render("  godu - Keyboard Shortcuts")
 

@@ -17,9 +17,6 @@ type KeyMap struct {
 	Quit      key.Binding
 	ForceQuit key.Binding
 	Help      key.Binding
-	Info      key.Binding
-	Search    key.Binding
-	Shell     key.Binding
 
 	// View switching
 	ViewTree     key.Binding
@@ -95,18 +92,6 @@ func DefaultKeyMap() KeyMap {
 		Help: key.NewBinding(
 			key.WithKeys("?"),
 			key.WithHelp("?", "help"),
-		),
-		Info: key.NewBinding(
-			key.WithKeys("i"),
-			key.WithHelp("i", "file info"),
-		),
-		Search: key.NewBinding(
-			key.WithKeys("/"),
-			key.WithHelp("/", "search"),
-		),
-		Shell: key.NewBinding(
-			key.WithKeys("b"),
-			key.WithHelp("b", "shell"),
 		),
 		ViewTree: key.NewBinding(
 			key.WithKeys("1"),

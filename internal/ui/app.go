@@ -169,6 +169,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		a.root = msg.Root
 		a.currentDir = msg.Root
+		a.navStack = nil
+		a.cursor = 0
+		a.offset = 0
 		a.state = StateBrowsing
 		a.refreshSorted()
 		return a, nil
@@ -185,6 +188,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case DeleteDoneMsg:
+		for _, name := range msg.Deleted {
+			a.currentDir.RemoveChild(name)
+		}
 		a.state = StateBrowsing
 		a.clearMarks()
 		a.refreshSorted()
@@ -308,6 +314,9 @@ func (a *App) handleBrowsingKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, a.keys.Rescan):
 		a.clearMarks()
+		a.navStack = nil
+		a.cursor = 0
+		a.offset = 0
 		a.state = StateScanning
 		return a, tea.Batch(a.scanCmd(), a.tickCmd())
 	}
@@ -582,7 +591,6 @@ func (a *App) prepareDelete() tea.Cmd {
 
 func (a *App) executeDelete() tea.Cmd {
 	items := a.markedItems
-	currentDir := a.currentDir
 	rootPath := a.root.Path()
 
 	return func() tea.Msg {
@@ -595,7 +603,6 @@ func (a *App) executeDelete() tea.Cmd {
 				errors = append(errors, err)
 			} else {
 				deleted = append(deleted, item.Name)
-				currentDir.RemoveChild(item.Name)
 			}
 		}
 

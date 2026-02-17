@@ -19,10 +19,7 @@ type ConfirmItem struct {
 
 // RenderConfirmDialog renders the deletion confirmation modal.
 func RenderConfirmDialog(theme style.Theme, items []ConfirmItem, width, height int) string {
-	boxWidth := 60
-	if boxWidth > width-4 {
-		boxWidth = width - 4
-	}
+	boxWidth := min(60, max(width-4, 1))
 
 	var lines []string
 
