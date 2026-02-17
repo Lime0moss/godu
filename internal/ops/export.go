@@ -3,6 +3,7 @@ package ops
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/serdar/godu/internal/model"
@@ -34,41 +35,80 @@ type ncduEntry struct {
 	Err   bool   `json:"read_error,omitempty"`
 }
 
+// errWriter wraps an *os.File and captures the first write/seek error.
+// Subsequent writes after an error are no-ops, avoiding verbose per-call checks.
+type errWriter struct {
+	w   *os.File
+	err error
+}
+
+func (ew *errWriter) WriteString(s string) {
+	if ew.err != nil {
+		return
+	}
+	_, ew.err = ew.w.WriteString(s)
+}
+
+func (ew *errWriter) Write(data []byte) (int, error) {
+	if ew.err != nil {
+		return 0, ew.err
+	}
+	n, err := ew.w.Write(data)
+	if err != nil {
+		ew.err = err
+	}
+	return n, err
+}
+
+func (ew *errWriter) seek(offset int64, whence int) {
+	if ew.err != nil {
+		return
+	}
+	_, ew.err = ew.w.Seek(offset, whence)
+}
+
 // ExportJSON exports the tree to ncdu-compatible JSON format.
-func ExportJSON(root *model.DirNode, path string) error {
+func ExportJSON(root *model.DirNode, path string) (retErr error) {
 	f, err := os.Create(path)
 	if err != nil {
 		return fmt.Errorf("cannot create export file: %w", err)
 	}
-	defer f.Close()
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil && retErr == nil {
+			retErr = closeErr
+		}
+	}()
 
-	enc := json.NewEncoder(f)
+	ew := &errWriter{w: f}
 
 	// Write opening bracket and header
-	f.WriteString("[1, 0, ")
+	ew.WriteString("[1, 0, ")
 	header := ncduHeader{
 		Progname: "godu",
 		Progver:  "1.0",
 	}
+	enc := json.NewEncoder(ew)
 	if err := enc.Encode(header); err != nil {
 		return err
 	}
 	// Remove the trailing newline from Encode
-	f.Seek(-1, 1)
-	f.WriteString(",\n")
+	ew.seek(-1, io.SeekCurrent)
+	ew.WriteString(",\n")
 
 	// Write tree recursively
-	if err := writeDir(f, root, true); err != nil {
-		return err
-	}
+	writeDir(ew, root)
 
-	f.WriteString("\n]\n")
-	return nil
+	ew.WriteString("\n]\n")
+	return ew.err
 }
 
-func writeDir(f *os.File, dir *model.DirNode, isRoot bool) error {
+func writeDir(ew *errWriter, dir *model.DirNode) {
+	if ew.err != nil {
+		return
+	}
+
 	// Open array for directory
-	f.WriteString("[")
+	ew.WriteString("[")
 
 	// Directory entry
 	entry := ncduEntry{
@@ -78,19 +118,21 @@ func writeDir(f *os.File, dir *model.DirNode, isRoot bool) error {
 	}
 	data, err := json.Marshal(entry)
 	if err != nil {
-		return err
+		ew.err = err
+		return
 	}
-	f.Write(data)
+	ew.Write(data)
 
 	children := dir.GetChildren()
 	for _, child := range children {
-		f.WriteString(",\n")
+		if ew.err != nil {
+			return
+		}
+		ew.WriteString(",\n")
 
 		switch c := child.(type) {
 		case *model.DirNode:
-			if err := writeDir(f, c, false); err != nil {
-				return err
-			}
+			writeDir(ew, c)
 		case *model.FileNode:
 			entry := ncduEntry{
 				Name:  c.Name,
@@ -106,12 +148,12 @@ func writeDir(f *os.File, dir *model.DirNode, isRoot bool) error {
 			}
 			data, err := json.Marshal(entry)
 			if err != nil {
-				return err
+				ew.err = err
+				return
 			}
-			f.Write(data)
+			ew.Write(data)
 		}
 	}
 
-	f.WriteString("]")
-	return nil
+	ew.WriteString("]")
 }

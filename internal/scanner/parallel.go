@@ -15,6 +15,13 @@ import (
 	"github.com/serdar/godu/internal/model"
 )
 
+// inodeKey uniquely identifies a file across filesystems using both device and
+// inode number. Using inode alone can cause false dedup on cross-filesystem scans.
+type inodeKey struct {
+	dev uint64
+	ino uint64
+}
+
 // ParallelScanner implements Scanner with goroutine-per-directory parallelism.
 type ParallelScanner struct{}
 
@@ -57,9 +64,9 @@ func (s *ParallelScanner) Scan(ctx context.Context, path string, opts ScanOption
 	}
 	sem := make(chan struct{}, concurrency)
 
-	// Hardlink tracking
+	// Hardlink tracking (keyed by device+inode to avoid cross-filesystem collisions)
 	var inodeMu sync.Mutex
-	inodeMap := make(map[uint64]bool)
+	inodeMap := make(map[inodeKey]bool)
 
 	// Progress tracking
 	var filesScanned, dirsScanned, bytesFound, errCount atomic.Int64
@@ -111,9 +118,13 @@ func (s *ParallelScanner) Scan(ctx context.Context, path string, opts ScanOption
 		}()
 	}
 
+	// Track visited directories by canonical path to avoid cycles and duplicates.
+	var visitedDirs sync.Map
+	visitedDirs.Store(absPath, true)
+
 	// Recursive parallel scan
 	var wg sync.WaitGroup
-	s.scanDir(ctx, absPath, root, opts, sem, &wg, &filesScanned, &dirsScanned, &bytesFound, &errCount, inodeMap, &inodeMu, excludeSet)
+	s.scanDir(ctx, absPath, absPath, root, opts, sem, &wg, &filesScanned, &dirsScanned, &bytesFound, &errCount, inodeMap, &inodeMu, excludeSet, &visitedDirs)
 	wg.Wait()
 
 	// Bottom-up size calculation after all goroutines complete
@@ -140,15 +151,17 @@ func (s *ParallelScanner) Scan(ctx context.Context, path string, opts ScanOption
 
 func (s *ParallelScanner) scanDir(
 	ctx context.Context,
+	scanRoot string,
 	dirPath string,
 	parent *model.DirNode,
 	opts ScanOptions,
 	sem chan struct{},
 	wg *sync.WaitGroup,
 	filesScanned, dirsScanned, bytesFound, errCount *atomic.Int64,
-	inodeMap map[uint64]bool,
+	inodeMap map[inodeKey]bool,
 	inodeMu *sync.Mutex,
 	excludeSet map[string]bool,
+	visitedDirs *sync.Map,
 ) {
 	select {
 	case <-ctx.Done():
@@ -163,6 +176,23 @@ func (s *ParallelScanner) scanDir(
 	}
 
 	dirsScanned.Add(1)
+
+	// Run subdirectory scans with bounded goroutines.
+	// If all workers are busy, scan synchronously in the current goroutine
+	// instead of spawning blocked goroutines.
+	spawnScan := func(path string, dir *model.DirNode) {
+		select {
+		case sem <- struct{}{}:
+			wg.Add(1)
+			go func(p string, d *model.DirNode) {
+				defer wg.Done()
+				defer func() { <-sem }()
+				s.scanDir(ctx, scanRoot, p, d, opts, sem, wg, filesScanned, dirsScanned, bytesFound, errCount, inodeMap, inodeMu, excludeSet, visitedDirs)
+			}(path, dir)
+		default:
+			s.scanDir(ctx, scanRoot, path, dir, opts, sem, wg, filesScanned, dirsScanned, bytesFound, errCount, inodeMap, inodeMu, excludeSet, visitedDirs)
+		}
+	}
 
 	for _, entry := range entries {
 		select {
@@ -186,11 +216,9 @@ func (s *ParallelScanner) scanDir(
 		fullPath := filepath.Join(dirPath, name)
 
 		if entry.IsDir() {
-			// Handle symlink directories
-			if entry.Type()&os.ModeSymlink != 0 {
-				if !opts.FollowSymlinks {
-					continue
-				}
+			scanPath := fullPath
+			if resolvedPath, err := filepath.EvalSymlinks(fullPath); err == nil {
+				scanPath = resolvedPath
 			}
 
 			childDir := &model.DirNode{
@@ -206,15 +234,75 @@ func (s *ParallelScanner) scanDir(
 
 			parent.AddChild(childDir)
 
-			// Spawn goroutine for subdirectory
-			wg.Add(1)
-			go func(path string, dir *model.DirNode) {
-				defer wg.Done()
-				sem <- struct{}{}        // Acquire semaphore
-				defer func() { <-sem }() // Release semaphore
+			// Already visited via another path (e.g. followed symlink): keep node,
+			// but skip recursion so size is not double-counted.
+			if _, loaded := visitedDirs.LoadOrStore(scanPath, true); loaded {
+				continue
+			}
 
-				s.scanDir(ctx, path, dir, opts, sem, wg, filesScanned, dirsScanned, bytesFound, errCount, inodeMap, inodeMu, excludeSet)
-			}(fullPath, childDir)
+			spawnScan(scanPath, childDir)
+		} else if entry.Type()&os.ModeSymlink != 0 && opts.FollowSymlinks {
+			// Resolve symlink — if it points to a directory, recurse into it
+			resolvedPath, err := filepath.EvalSymlinks(fullPath)
+			if err != nil {
+				errCount.Add(1)
+				continue
+			}
+			targetInfo, err := os.Stat(resolvedPath)
+			if err != nil {
+				errCount.Add(1)
+				continue
+			}
+			if targetInfo.IsDir() {
+				childDir := &model.DirNode{
+					FileNode: model.FileNode{
+						Name:   name,
+						Mtime:  targetInfo.ModTime(),
+						Flag:   model.FlagSymlink,
+						Parent: parent,
+					},
+				}
+				parent.AddChild(childDir)
+
+				// Avoid duplicate traversal for symlinks pointing inside the scan root.
+				// The canonical in-tree directory will be scanned via normal traversal.
+				if isWithin(scanRoot, resolvedPath) {
+					continue
+				}
+
+				// If target was already scanned, don't recurse again.
+				if _, loaded := visitedDirs.LoadOrStore(resolvedPath, true); loaded {
+					continue
+				}
+
+				spawnScan(resolvedPath, childDir)
+				continue
+			}
+			// Symlink to file — fall through to file handling below
+			info := targetInfo
+
+			var inode uint64
+			var diskUsage int64
+
+			if stat, ok := info.Sys().(*syscall.Stat_t); ok {
+				inode = stat.Ino
+				diskUsage = int64(stat.Blocks) * 512
+			} else {
+				diskUsage = info.Size()
+			}
+
+			fileNode := &model.FileNode{
+				Name:   name,
+				Size:   info.Size(),
+				Usage:  diskUsage,
+				Mtime:  info.ModTime(),
+				Inode:  inode,
+				Flag:   model.FlagSymlink,
+				Parent: parent,
+			}
+			parent.AddChild(fileNode)
+			filesScanned.Add(1)
+			bytesFound.Add(info.Size())
 		} else {
 			info, err := entry.Info()
 			if err != nil {
@@ -238,7 +326,7 @@ func (s *ParallelScanner) scanDir(
 				// Hardlink detection
 				if stat.Nlink > 1 {
 					inodeMu.Lock()
-					if inodeMap[inode] {
+					if inodeMap[inodeKey{dev: uint64(stat.Dev), ino: stat.Ino}] {
 						flag |= model.FlagHardlink
 						inodeMu.Unlock()
 						// Still add the node but don't count size twice
@@ -255,7 +343,7 @@ func (s *ParallelScanner) scanDir(
 						filesScanned.Add(1)
 						continue
 					}
-					inodeMap[inode] = true
+					inodeMap[inodeKey{dev: uint64(stat.Dev), ino: stat.Ino}] = true // uses both dev+ino to avoid cross-filesystem inode collisions
 					inodeMu.Unlock()
 				}
 			} else {
@@ -277,6 +365,17 @@ func (s *ParallelScanner) scanDir(
 			bytesFound.Add(info.Size())
 		}
 	}
+}
+
+func isWithin(root, target string) bool {
+	rel, err := filepath.Rel(root, target)
+	if err != nil {
+		return false
+	}
+	if rel == "." {
+		return true
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // updateSizeRecursive performs a bottom-up size calculation.

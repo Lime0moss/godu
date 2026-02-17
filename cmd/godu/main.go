@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/serdar/godu/internal/ops"
@@ -141,17 +142,11 @@ func main() {
 
 func splitComma(s string) []string {
 	var result []string
-	current := ""
-	for _, c := range s {
-		if c == ',' {
-			result = append(result, current)
-			current = ""
-		} else {
-			current += string(c)
+	for _, part := range strings.Split(s, ",") {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			result = append(result, trimmed)
 		}
-	}
-	if current != "" {
-		result = append(result, current)
 	}
 	return result
 }

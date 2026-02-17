@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -18,7 +19,7 @@ import (
 type ViewMode int
 
 const (
-	ViewTree     ViewMode = iota
+	ViewTree ViewMode = iota
 	ViewTreemap
 	ViewFileType
 )
@@ -84,10 +85,10 @@ type App struct {
 	useApparent bool
 	showHidden  bool
 
-	scanProgress scanner.Progress
-	progressMu   sync.Mutex
+	scanProgress   scanner.Progress
+	progressMu     sync.Mutex
 	latestProgress scanner.Progress
-	scanCancel   context.CancelFunc
+	scanCancel     context.CancelFunc
 
 	theme  style.Theme
 	keys   KeyMap
@@ -167,7 +168,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case DeleteDoneMsg:
 		a.state = StateBrowsing
-		a.marked = make(map[string]bool)
+		a.clearMarks()
 		a.refreshSorted()
 		if a.cursor >= len(a.sortedItems) {
 			a.cursor = len(a.sortedItems) - 1
@@ -175,10 +176,20 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if a.cursor < 0 {
 			a.cursor = 0
 		}
+		if len(msg.Errors) > 0 {
+			a.errorMsg = fmt.Sprintf("Delete: %d failed (%v)", len(msg.Errors), msg.Errors[0])
+		} else if len(msg.Deleted) > 0 {
+			a.errorMsg = fmt.Sprintf("Deleted %d item(s)", len(msg.Deleted))
+		}
 		return a, nil
 
 	case ExportDoneMsg:
 		a.state = StateBrowsing
+		if msg.Err != nil {
+			a.errorMsg = fmt.Sprintf("Export failed: %v", msg.Err)
+		} else {
+			a.errorMsg = fmt.Sprintf("Exported to %s", msg.Path)
+		}
 		return a, nil
 
 	case tea.KeyMsg:
@@ -229,6 +240,7 @@ func (a *App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (a *App) handleBrowsingKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	a.errorMsg = ""
 	switch {
 	case key.Matches(msg, a.keys.Quit):
 		return a, tea.Quit
@@ -267,6 +279,7 @@ func (a *App) handleBrowsingKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		a.refreshSorted()
 	case key.Matches(msg, a.keys.ToggleHidden):
 		a.showHidden = !a.showHidden
+		a.clearMarks()
 		a.refreshSorted()
 
 	case key.Matches(msg, a.keys.Mark):
@@ -279,6 +292,7 @@ func (a *App) handleBrowsingKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a, a.exportCmd()
 
 	case key.Matches(msg, a.keys.Rescan):
+		a.clearMarks()
 		a.state = StateScanning
 		return a, tea.Batch(a.scanCmd(), a.tickCmd())
 	}
@@ -331,10 +345,10 @@ func (a *App) renderBrowsing() string {
 		content = tv.Render()
 
 	case ViewTreemap:
-		content = components.RenderTreemap(a.theme, a.currentDir, a.useApparent, a.layout.ContentWidth(), a.layout.ContentHeight())
+		content = components.RenderTreemap(a.theme, a.currentDir, a.useApparent, a.showHidden, a.layout.ContentWidth(), a.layout.ContentHeight())
 
 	case ViewFileType:
-		content = components.RenderFileTypes(a.theme, a.currentDir, a.useApparent, a.layout.ContentWidth(), a.layout.ContentHeight())
+		content = components.RenderFileTypes(a.theme, a.currentDir, a.useApparent, a.showHidden, a.layout.ContentWidth(), a.layout.ContentHeight())
 	}
 
 	statusInfo := components.StatusInfo{
@@ -344,10 +358,11 @@ func (a *App) renderBrowsing() string {
 		ShowHidden:  a.showHidden,
 		SortField:   a.sortConfig.Field,
 		ViewMode:    int(a.viewMode),
+		ErrorMsg:    a.errorMsg,
 	}
-	for path := range a.marked {
+	for markedPath := range a.marked {
 		for _, item := range a.sortedItems {
-			if item.GetName() == path {
+			if item.Path() == markedPath {
 				statusInfo.MarkedSize += item.GetSize()
 			}
 		}
@@ -380,6 +395,7 @@ func (a *App) enterDir() {
 		a.currentDir = dir
 		a.cursor = 0
 		a.offset = 0
+		a.clearMarks()
 		a.refreshSorted()
 	}
 }
@@ -393,6 +409,7 @@ func (a *App) goBack() {
 
 	leavingName := a.currentDir.Name
 	a.currentDir = prev
+	a.clearMarks()
 	a.refreshSorted()
 
 	for i, item := range a.sortedItems {
@@ -422,13 +439,17 @@ func (a *App) toggleMark() {
 	if a.cursor >= len(a.sortedItems) {
 		return
 	}
-	name := a.sortedItems[a.cursor].GetName()
-	if a.marked[name] {
-		delete(a.marked, name)
+	p := a.sortedItems[a.cursor].Path()
+	if a.marked[p] {
+		delete(a.marked, p)
 	} else {
-		a.marked[name] = true
+		a.marked[p] = true
 	}
 	a.moveCursor(1)
+}
+
+func (a *App) clearMarks() {
+	a.marked = make(map[string]bool)
 }
 
 func (a *App) refreshSorted() {
@@ -509,11 +530,12 @@ func (a *App) prepareDelete() tea.Cmd {
 	var items []components.ConfirmItem
 
 	if len(a.marked) > 0 {
-		for name := range a.marked {
+		for markedPath := range a.marked {
 			for _, item := range a.sortedItems {
-				if item.GetName() == name {
+				if item.Path() == markedPath {
 					items = append(items, components.ConfirmItem{
 						Name:  item.GetName(),
+						Path:  item.Path(),
 						Size:  item.GetSize(),
 						IsDir: item.IsDir(),
 					})
@@ -524,6 +546,7 @@ func (a *App) prepareDelete() tea.Cmd {
 		item := a.sortedItems[a.cursor]
 		items = append(items, components.ConfirmItem{
 			Name:  item.GetName(),
+			Path:  item.Path(),
 			Size:  item.GetSize(),
 			IsDir: item.IsDir(),
 		})
@@ -547,8 +570,7 @@ func (a *App) executeDelete() tea.Cmd {
 		var errors []error
 
 		for _, item := range items {
-			path := currentDir.Path() + "/" + item.Name
-			err := ops.Delete(path)
+			err := ops.Delete(item.Path)
 			if err != nil {
 				errors = append(errors, err)
 			} else {

@@ -20,12 +20,21 @@ type treemapItem struct {
 }
 
 // RenderTreemap renders a squarified treemap visualization.
-func RenderTreemap(theme style.Theme, dir *model.DirNode, useApparent bool, width, height int) string {
+func RenderTreemap(theme style.Theme, dir *model.DirNode, useApparent bool, showHidden bool, width, height int) string {
 	if dir == nil || height <= 0 || width <= 0 {
 		return ""
 	}
 
 	children := dir.GetChildren()
+	if !showHidden {
+		var filtered []model.TreeNode
+		for _, c := range children {
+			if len(c.GetName()) > 0 && c.GetName()[0] != '.' {
+				filtered = append(filtered, c)
+			}
+		}
+		children = filtered
+	}
 	if len(children) == 0 {
 		return lipgloss.NewStyle().
 			Foreground(theme.TextMuted).

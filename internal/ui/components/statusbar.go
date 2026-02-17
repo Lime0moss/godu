@@ -19,10 +19,16 @@ type StatusInfo struct {
 	ShowHidden  bool
 	SortField   model.SortField
 	ViewMode    int
+	ErrorMsg    string
 }
 
 // RenderStatusBar renders the bottom status bar.
 func RenderStatusBar(theme style.Theme, info StatusInfo, width int) string {
+	if info.ErrorMsg != "" {
+		errLine := " " + lipgloss.NewStyle().Foreground(theme.Warning).Bold(true).Render(info.ErrorMsg)
+		return theme.StatusBarStyle.Width(width).Render(errLine)
+	}
+
 	var parts []string
 
 	if info.CurrentDir != nil {

@@ -50,7 +50,7 @@ brew install godu
 
 ### From source
 
-Requires **Go 1.21+**.
+Requires **Go 1.25+**.
 
 ```bash
 # Clone the repository

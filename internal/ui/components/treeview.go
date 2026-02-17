@@ -45,7 +45,7 @@ func (tv *TreeView) Render() string {
 	for i := start; i < end; i++ {
 		item := tv.Items[i]
 		selected := i == tv.Cursor
-		marked := tv.Marked[item.GetName()]
+		marked := tv.Marked[item.Path()]
 		line := tv.renderRow(item, selected, marked, barWidth, nameWidth, width)
 		lines = append(lines, line)
 	}

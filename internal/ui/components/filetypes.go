@@ -20,12 +20,12 @@ type CategoryStats struct {
 }
 
 // RenderFileTypes renders the file type breakdown view.
-func RenderFileTypes(theme style.Theme, dir *model.DirNode, useApparent bool, width, height int) string {
+func RenderFileTypes(theme style.Theme, dir *model.DirNode, useApparent bool, showHidden bool, width, height int) string {
 	if dir == nil {
 		return ""
 	}
 
-	stats := aggregateFileTypes(dir, useApparent)
+	stats := aggregateFileTypes(dir, useApparent, showHidden)
 
 	sort.Slice(stats, func(i, j int) bool {
 		return stats[i].TotalSize > stats[j].TotalSize
@@ -106,12 +106,16 @@ func RenderFileTypes(theme style.Theme, dir *model.DirNode, useApparent bool, wi
 	return strings.Join(lines[:height], "\n")
 }
 
-func aggregateFileTypes(dir *model.DirNode, useApparent bool) []CategoryStats {
+func aggregateFileTypes(dir *model.DirNode, useApparent bool, showHidden bool) []CategoryStats {
 	catMap := make(map[model.FileCategory]*CategoryStats)
 
 	var walk func(d *model.DirNode)
 	walk = func(d *model.DirNode) {
 		for _, child := range d.GetChildren() {
+			name := child.GetName()
+			if !showHidden && len(name) > 0 && name[0] == '.' {
+				continue
+			}
 			if cd, ok := child.(*model.DirNode); ok {
 				walk(cd)
 			} else {

@@ -12,6 +12,7 @@ import (
 // ConfirmItem represents an item pending deletion.
 type ConfirmItem struct {
 	Name  string
+	Path  string // Full path used for deletion
 	Size  int64
 	IsDir bool
 }

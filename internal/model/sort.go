@@ -55,6 +55,13 @@ func SortChildren(children []TreeNode, cfg SortConfig, useApparent bool) {
 			}
 		}
 
+		// For descending order, swap a and b so the same less-than
+		// comparisons produce the reverse result. This preserves
+		// strict weak ordering (equal items return false, not true).
+		if cfg.Order == SortDesc {
+			a, b = b, a
+		}
+
 		var less bool
 		switch cfg.Field {
 		case SortBySize:
@@ -82,9 +89,6 @@ func SortChildren(children []TreeNode, cfg SortConfig, useApparent bool) {
 			less = a.GetSize() < b.GetSize()
 		}
 
-		if cfg.Order == SortDesc {
-			return !less
-		}
 		return less
 	})
 }
