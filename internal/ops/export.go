@@ -27,20 +27,20 @@ type ncduHeader struct {
 }
 
 type ncduEntry struct {
-	Name  string `json:"name"`
-	Asize int64  `json:"asize"`
-	Dsize int64  `json:"dsize,omitempty"`
-	Ino   uint64 `json:"ino,omitempty"`
-	Nlink int    `json:"nlink,omitempty"`
-	Hlnkc   bool `json:"hlnkc,omitempty"`
-	Err     bool `json:"read_error,omitempty"`
-	Symlink bool `json:"symlink,omitempty"`
+	Name    string `json:"name"`
+	Asize   int64  `json:"asize"`
+	Dsize   int64  `json:"dsize,omitempty"`
+	Ino     uint64 `json:"ino,omitempty"`
+	Nlink   int    `json:"nlink,omitempty"`
+	Hlnkc   bool   `json:"hlnkc,omitempty"`
+	Err     bool   `json:"read_error,omitempty"`
+	Symlink bool   `json:"symlink,omitempty"`
 }
 
-// errWriter wraps an *os.File and captures the first write/seek error.
+// errWriter wraps an io.Writer and captures the first write error.
 // Subsequent writes after an error are no-ops, avoiding verbose per-call checks.
 type errWriter struct {
-	w   *os.File
+	w   io.Writer
 	err error
 }
 
@@ -48,7 +48,7 @@ func (ew *errWriter) WriteString(s string) {
 	if ew.err != nil {
 		return
 	}
-	_, ew.err = ew.w.WriteString(s)
+	_, ew.err = io.WriteString(ew.w, s)
 }
 
 func (ew *errWriter) Write(data []byte) (int, error) {
@@ -62,26 +62,25 @@ func (ew *errWriter) Write(data []byte) (int, error) {
 	return n, err
 }
 
-func (ew *errWriter) seek(offset int64, whence int) {
-	if ew.err != nil {
-		return
-	}
-	_, ew.err = ew.w.Seek(offset, whence)
-}
-
 // ExportJSON exports the tree to ncdu-compatible JSON format.
 func ExportJSON(root *model.DirNode, path string, version string) (retErr error) {
-	f, err := os.Create(path)
-	if err != nil {
-		return fmt.Errorf("cannot create export file: %w", err)
-	}
-	defer func() {
-		if closeErr := f.Close(); closeErr != nil && retErr == nil {
-			retErr = closeErr
+	var out io.Writer
+	if path == "-" {
+		out = os.Stdout
+	} else {
+		f, err := os.Create(path)
+		if err != nil {
+			return fmt.Errorf("cannot create export file: %w", err)
 		}
-	}()
+		defer func() {
+			if closeErr := f.Close(); closeErr != nil && retErr == nil {
+				retErr = closeErr
+			}
+		}()
+		out = f
+	}
 
-	ew := &errWriter{w: f}
+	ew := &errWriter{w: out}
 
 	// Write opening bracket and header
 	ew.WriteString("[1, 0, ")
@@ -93,12 +92,11 @@ func ExportJSON(root *model.DirNode, path string, version string) (retErr error)
 		Progver:   version,
 		Timestamp: time.Now().Unix(),
 	}
-	enc := json.NewEncoder(ew)
-	if err := enc.Encode(header); err != nil {
+	headerJSON, err := json.Marshal(header)
+	if err != nil {
 		return err
 	}
-	// Remove the trailing newline from Encode
-	ew.seek(-1, io.SeekCurrent)
+	_, _ = ew.Write(headerJSON)
 	ew.WriteString(",\n")
 
 	// Write tree recursively

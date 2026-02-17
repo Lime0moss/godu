@@ -15,7 +15,7 @@ godu combines parallel scanning speed, visual treemap analysis, file type breakd
 - **Export/Import** — save scan results to JSON, reload later without rescanning
 - **Vim keybindings** — `hjkl` navigation, feels natural
 - **Responsive layout** — adapts to any terminal size
-- **Zero dependencies** — single static binary, no CGo, no networking
+- **Single binary** — no CGo, no daemon/services required
 
 ## Screenshots
 
@@ -104,8 +104,20 @@ godu --no-hidden /path
 # Export scan results to JSON (headless, no TUI)
 godu --export scan.json /path
 
+# Export JSON to stdout
+godu --export - /path
+
 # Import and browse a previous scan
 godu --import scan.json
+
+# Remote scan over SSH (default port 22)
+godu user@192.168.1.10
+
+# Remote scan over SSH with custom port
+godu --ssh-port 2222 user@192.168.1.10 /var/log
+
+# Remote scan forcing key-based auth (no password prompt)
+godu --ssh-batch user@192.168.1.10
 
 # Disable GC during scan (faster, uses more memory)
 godu --no-gc /large/directory
@@ -223,6 +235,9 @@ godu/
 │   │   ├── delete.go             # File deletion
 │   │   ├── export.go             # JSON export
 │   │   └── import.go             # JSON import
+│   ├── remote/
+│   │   ├── auth.go               # SSH auth + known_hosts handling
+│   │   └── sftp_scanner.go       # Client-side SFTP scanner
 │   └── util/
 │       ├── format.go             # Size/count formatting
 │       └── icons.go              # Unicode icons
@@ -241,8 +256,15 @@ godu/
 | [bubbles](https://github.com/charmbracelet/bubbles) | Key binding helpers |
 | [go-colorful](https://github.com/lucasb-eyer/go-colorful) | Gradient color interpolation |
 | [natural](https://github.com/maruel/natural) | Natural string sorting |
+| [x/crypto/ssh](https://pkg.go.dev/golang.org/x/crypto/ssh) | Native SSH transport |
+| [pkg/sftp](https://github.com/pkg/sftp) | SFTP client traversal |
 
-No CGo. No database. No networking. Compiles to a single static binary.
+No CGo. No database. Compiles to a single static binary.
+
+Remote scanning is performed client-side over SSH/SFTP; the remote host does not need `godu` installed.
+By default it allows password prompts; use `--ssh-batch` for key/agent-only auth.
+Remote host must have the SSH SFTP subsystem enabled.
+On first connection (or key change), `godu` prompts to trust/update the host key in `~/.ssh/known_hosts`.
 
 ## Performance
 

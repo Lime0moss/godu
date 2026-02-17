@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -152,6 +153,44 @@ func TestE2E_ImportExportFailsWhenImportFileMissing(t *testing.T) {
 	}
 	if _, err := os.Stat(exportPath); !os.IsNotExist(err) {
 		t.Fatalf("expected no output file, stat err=%v", err)
+	}
+}
+
+func TestE2E_HeadlessExportToStdoutWritesJSONOnly(t *testing.T) {
+	scanRoot := createScanFixture(t)
+
+	result := runCLI(t, "--export", "-", scanRoot)
+	if result.exitCode != 0 {
+		t.Fatalf("expected exit code 0, got %d\nstdout:\n%s\nstderr:\n%s", result.exitCode, result.stdout, result.stderr)
+	}
+	if strings.Contains(result.stdout, "Scanning ") {
+		t.Fatalf("expected stdout to contain only JSON, got:\n%s", result.stdout)
+	}
+	if strings.Contains(result.stdout, "Exported to") {
+		t.Fatalf("expected stdout to contain only JSON, got:\n%s", result.stdout)
+	}
+	if strings.TrimSpace(result.stderr) != "" {
+		t.Fatalf("expected empty stderr, got:\n%s", result.stderr)
+	}
+
+	var raw []json.RawMessage
+	if err := json.Unmarshal([]byte(strings.TrimSpace(result.stdout)), &raw); err != nil {
+		t.Fatalf("expected valid JSON in stdout, got error: %v\nstdout:\n%s", err, result.stdout)
+	}
+	if len(raw) < 4 {
+		t.Fatalf("expected ncdu root array, got %d elements", len(raw))
+	}
+}
+
+func TestE2E_ImportRejectsScanTargets(t *testing.T) {
+	importPath := filepath.Join(t.TempDir(), "scan.json")
+
+	result := runCLI(t, "--import", importPath, "alice@10.0.0.2")
+	if result.exitCode == 0 {
+		t.Fatalf("expected non-zero exit code\nstdout:\n%s\nstderr:\n%s", result.stdout, result.stderr)
+	}
+	if !strings.Contains(result.stderr, "--import cannot be used with scan targets") {
+		t.Fatalf("unexpected error message:\n%s", result.stderr)
 	}
 }
 
