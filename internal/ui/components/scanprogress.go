@@ -5,9 +5,9 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/serdar/godu/internal/scanner"
-	"github.com/serdar/godu/internal/ui/style"
-	"github.com/serdar/godu/internal/util"
+	"github.com/sadopc/godu/internal/scanner"
+	"github.com/sadopc/godu/internal/ui/style"
+	"github.com/sadopc/godu/internal/util"
 )
 
 // RenderScanProgress renders the scanning progress overlay.

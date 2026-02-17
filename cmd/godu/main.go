@@ -9,9 +9,9 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/serdar/godu/internal/ops"
-	"github.com/serdar/godu/internal/scanner"
-	"github.com/serdar/godu/internal/ui"
+	"github.com/sadopc/godu/internal/ops"
+	"github.com/sadopc/godu/internal/scanner"
+	"github.com/sadopc/godu/internal/ui"
 )
 
 var (

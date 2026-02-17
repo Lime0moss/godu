@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/serdar/godu/internal/model"
+	"github.com/sadopc/godu/internal/model"
 )
 
 // inodeKey uniquely identifies a file across filesystems using both device and

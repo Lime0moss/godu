@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/serdar/godu/internal/model"
+	"github.com/sadopc/godu/internal/model"
 )
 
 // validateName rejects names that could escape the directory tree.

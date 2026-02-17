@@ -1,4 +1,4 @@
-module github.com/serdar/godu
+module github.com/sadopc/godu
 
 go 1.25.7
 

@@ -3,7 +3,7 @@ package scanner
 import (
 	"context"
 
-	"github.com/serdar/godu/internal/model"
+	"github.com/sadopc/godu/internal/model"
 )
 
 // ScanOptions configures the scanner behavior.

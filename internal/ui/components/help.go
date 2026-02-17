@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/serdar/godu/internal/ui/style"
+	"github.com/sadopc/godu/internal/ui/style"
 )
 
 // RenderHelp renders the help overlay.

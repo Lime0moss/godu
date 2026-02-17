@@ -5,9 +5,9 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/serdar/godu/internal/model"
-	"github.com/serdar/godu/internal/ui/style"
-	"github.com/serdar/godu/internal/util"
+	"github.com/sadopc/godu/internal/model"
+	"github.com/sadopc/godu/internal/ui/style"
+	"github.com/sadopc/godu/internal/util"
 )
 
 // TreeView renders the main tree list view.

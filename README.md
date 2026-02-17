@@ -54,7 +54,7 @@ Requires **Go 1.25+**.
 
 ```bash
 # Clone the repository
-git clone https://github.com/serdar/godu.git
+git clone https://github.com/sadopc/godu.git
 cd godu
 
 # Build

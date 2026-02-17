@@ -7,7 +7,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/serdar/godu/internal/model"
+	"github.com/sadopc/godu/internal/model"
 )
 
 // ncdu-compatible JSON format:

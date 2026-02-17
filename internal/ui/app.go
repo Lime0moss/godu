@@ -8,11 +8,11 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/serdar/godu/internal/model"
-	"github.com/serdar/godu/internal/ops"
-	"github.com/serdar/godu/internal/scanner"
-	"github.com/serdar/godu/internal/ui/components"
-	"github.com/serdar/godu/internal/ui/style"
+	"github.com/sadopc/godu/internal/model"
+	"github.com/sadopc/godu/internal/ops"
+	"github.com/sadopc/godu/internal/scanner"
+	"github.com/sadopc/godu/internal/ui/components"
+	"github.com/sadopc/godu/internal/ui/style"
 )
 
 // ViewMode represents the current view.
