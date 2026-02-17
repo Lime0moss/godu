@@ -27,6 +27,8 @@ func main() {
 	showVersion := flag.Bool("version", false, "Show version")
 	disableGC := flag.Bool("no-gc", false, "Disable GC during scan (faster but uses more memory)")
 	exclude := flag.String("exclude", "", "Comma-separated list of directory names to exclude")
+	followSymlinks := flag.Bool("follow-symlinks", false, "Follow symbolic links during scan")
+	concurrency := flag.Int("j", 0, "Max concurrent directory scans (0 = auto: 3x CPU cores)")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "godu - Interactive disk usage analyzer\n\n")
@@ -38,6 +40,8 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  godu /home                Scan /home\n")
 		fmt.Fprintf(os.Stderr, "  godu --export scan.json . Export scan to JSON\n")
 		fmt.Fprintf(os.Stderr, "  godu --import scan.json   View exported scan\n")
+		fmt.Fprintf(os.Stderr, "  godu --follow-symlinks .  Follow symlinks during scan\n")
+		fmt.Fprintf(os.Stderr, "  godu -j 8 /home           Scan with 8 concurrent workers\n")
 	}
 
 	flag.Parse()
@@ -104,6 +108,12 @@ func main() {
 		opts.ShowHidden = false
 	}
 	opts.DisableGC = *disableGC
+	opts.FollowSymlinks = *followSymlinks
+	if *concurrency < 0 {
+		fmt.Fprintf(os.Stderr, "Error: concurrency (-j) must be >= 0\n")
+		os.Exit(1)
+	}
+	opts.Concurrency = *concurrency
 
 	if *exclude != "" {
 		for _, e := range splitComma(*exclude) {
