@@ -219,14 +219,33 @@ func (s *ParallelScanner) scanDir(
 			continue
 		}
 
-		// Skip special files (devices, sockets, pipes, irregular)
-		if isSpecialMode(entry.Type()) {
+		fullPath := filepath.Join(dirPath, name)
+		info, err := entry.Info()
+		if err != nil {
+			errCount.Add(1)
 			continue
 		}
 
-		fullPath := filepath.Join(dirPath, name)
+		mode := entry.Type()
+		infoMode := info.Mode()
+		// Some filesystems may return unknown dirent types; use FileInfo mode as fallback.
+		if mode == 0 {
+			mode = infoMode.Type()
+		}
+		if infoMode.IsDir() {
+			mode |= os.ModeDir
+		}
+		if infoMode&os.ModeSymlink != 0 {
+			mode |= os.ModeSymlink
+		}
 
-		if entry.IsDir() {
+		// Skip special files (devices, sockets, pipes, irregular).
+		// Check both dirent type and FileInfo mode for DT_UNKNOWN filesystems.
+		if isSpecialMode(mode) || isSpecialMode(infoMode) {
+			continue
+		}
+
+		if mode.IsDir() {
 			scanPath := fullPath
 			if opts.FollowSymlinks {
 				if resolvedPath, err := filepath.EvalSymlinks(fullPath); err == nil {
@@ -240,10 +259,7 @@ func (s *ParallelScanner) scanDir(
 					Parent: parent,
 				},
 			}
-
-			if info, err := entry.Info(); err == nil {
-				childDir.Mtime = info.ModTime()
-			}
+			childDir.Mtime = info.ModTime()
 
 			parent.AddChild(childDir)
 
@@ -254,7 +270,7 @@ func (s *ParallelScanner) scanDir(
 			}
 
 			spawnScan(scanPath, childDir)
-		} else if entry.Type()&os.ModeSymlink != 0 && opts.FollowSymlinks {
+		} else if mode&os.ModeSymlink != 0 && opts.FollowSymlinks {
 			// Resolve symlink — if it points to a directory, recurse into it
 			resolvedPath, err := filepath.EvalSymlinks(fullPath)
 			if err != nil {
@@ -341,14 +357,8 @@ func (s *ParallelScanner) scanDir(
 			filesScanned.Add(1)
 			bytesFound.Add(info.Size())
 		} else {
-			info, err := entry.Info()
-			if err != nil {
-				errCount.Add(1)
-				continue
-			}
-
 			var flag model.NodeFlag
-			if entry.Type()&os.ModeSymlink != 0 {
+			if mode&os.ModeSymlink != 0 {
 				flag = model.FlagSymlink
 			}
 

@@ -45,6 +45,40 @@ garbage`
 	}
 }
 
+func TestImportJSON_RejectsNegativeDirectorySize(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "bad-dir-size.json")
+	data := `[1,0,{"progname":"godu","progver":"dev","timestamp":0},[{"name":"/tmp/root","asize":-1,"dsize":1}]]`
+	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := ImportJSON(path)
+	if err == nil {
+		t.Fatal("expected negative directory size to fail import")
+	}
+	if !strings.Contains(err.Error(), "directory asize") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestImportJSON_RejectsNegativeFileSize(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "bad-file-size.json")
+	data := `[1,0,{"progname":"godu","progver":"dev","timestamp":0},[{"name":"/tmp/root"},{"name":"bad.txt","asize":-1,"dsize":1}]]`
+	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := ImportJSON(path)
+	if err == nil {
+		t.Fatal("expected negative file size to fail import")
+	}
+	if !strings.Contains(err.Error(), "file asize") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestValidateName_SlashAlwaysRejected(t *testing.T) {
 	if err := validateName("a/b"); err == nil {
 		t.Fatal("expected slash to be rejected")

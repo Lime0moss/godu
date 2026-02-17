@@ -92,6 +92,57 @@ func TestScanWithClient_FollowSymlinkDirDedups(t *testing.T) {
 	}
 }
 
+func TestScanWithClient_FollowSymlinkFileDedupsAlias(t *testing.T) {
+	client := newFakeSFTP(map[string]fakeNode{
+		"/root":            {mode: os.ModeDir, children: []string{"target.txt", "alias.txt"}},
+		"/root/target.txt": {mode: 0, size: 10},
+		"/root/alias.txt":  {mode: os.ModeSymlink, target: "/root/target.txt"},
+	})
+
+	s := &SFTPScanner{cfg: Config{Target: "user@host", Port: 22}, dial: fakeDial(client)}
+	root, err := s.Scan(context.Background(), "/root", scanner.ScanOptions{
+		ShowHidden:     true,
+		FollowSymlinks: true,
+	}, nil)
+	if err != nil {
+		t.Fatalf("scan failed: %v", err)
+	}
+
+	var targetNode, aliasNode model.TreeNode
+	for _, child := range root.GetChildren() {
+		switch child.GetName() {
+		case "target.txt":
+			targetNode = child
+		case "alias.txt":
+			aliasNode = child
+		}
+	}
+	if targetNode == nil || aliasNode == nil {
+		t.Fatalf("expected target and alias nodes, got target=%v alias=%v", targetNode != nil, aliasNode != nil)
+	}
+
+	if root.GetSize() != 10 {
+		t.Fatalf("expected root size 10, got %d", root.GetSize())
+	}
+
+	nonZeroCount := 0
+	hardlinkCount := 0
+	for _, n := range []model.TreeNode{targetNode, aliasNode} {
+		if n.GetSize() > 0 {
+			nonZeroCount++
+		}
+		if n.GetFlag()&model.FlagHardlink != 0 {
+			hardlinkCount++
+		}
+	}
+	if nonZeroCount != 1 {
+		t.Fatalf("expected exactly one non-zero node size, got %d", nonZeroCount)
+	}
+	if hardlinkCount != 1 {
+		t.Fatalf("expected exactly one hardlink-marked node, got %d", hardlinkCount)
+	}
+}
+
 func TestScanWithClient_BrokenSymlinkGetsErrorFlag(t *testing.T) {
 	client := newFakeSFTP(map[string]fakeNode{
 		"/root":        {mode: os.ModeDir, children: []string{"broken"}},
@@ -192,6 +243,29 @@ func TestScanWithClient_SymlinkInsideScanRoot_NotDoubleScanned(t *testing.T) {
 	// Size should be 10, not 20 (no double-counting)
 	if root.GetSize() != 10 {
 		t.Fatalf("expected root size 10 (no double-count), got %d", root.GetSize())
+	}
+}
+
+func TestScanWithClient_SkipsSpecialFiles(t *testing.T) {
+	client := newFakeSFTP(map[string]fakeNode{
+		"/root":             {mode: os.ModeDir, children: []string{"regular.txt", "pipe"}},
+		"/root/regular.txt": {mode: 0, size: 4},
+		"/root/pipe":        {mode: os.ModeNamedPipe},
+	})
+
+	s := &SFTPScanner{cfg: Config{Target: "user@host", Port: 22}, dial: fakeDial(client)}
+	root, err := s.Scan(context.Background(), "/root", scanner.ScanOptions{
+		ShowHidden: true,
+	}, nil)
+	if err != nil {
+		t.Fatalf("scan failed: %v", err)
+	}
+
+	if findNode(root, "pipe") != nil {
+		t.Fatal("expected named pipe to be skipped")
+	}
+	if findNode(root, "regular.txt") == nil {
+		t.Fatal("expected regular file to be present")
 	}
 }
 

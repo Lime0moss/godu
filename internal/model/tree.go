@@ -6,6 +6,11 @@ import (
 	"time"
 )
 
+const (
+	maxInt64 = int64(^uint64(0) >> 1)
+	minInt64 = -maxInt64 - 1
+)
+
 // NodeFlag represents special file attributes.
 type NodeFlag uint8
 
@@ -91,18 +96,28 @@ func (d *DirNode) UpdateSize() {
 	var size, usage int64
 	var count int64
 	for _, c := range d.Children {
-		size += c.GetSize()
-		usage += c.GetUsage()
+		size = saturatingAddInt64(size, c.GetSize())
+		usage = saturatingAddInt64(usage, c.GetUsage())
 		if cd, ok := c.(*DirNode); ok {
-			count += cd.ItemCount
+			count = saturatingAddInt64(count, cd.ItemCount)
 		}
-		count++
+		count = saturatingAddInt64(count, 1)
 	}
 	d.mu.RUnlock()
 
 	d.Size = size
 	d.Usage = usage
 	d.ItemCount = count
+}
+
+func saturatingAddInt64(a, b int64) int64 {
+	if b > 0 && a > maxInt64-b {
+		return maxInt64
+	}
+	if b < 0 && a < minInt64-b {
+		return minInt64
+	}
+	return a + b
 }
 
 // RemoveChild removes a child by name and updates sizes up the tree.

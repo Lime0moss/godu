@@ -154,9 +154,10 @@ func (s *SFTPScanner) scanWithClient(ctx context.Context, client sftpClient, rem
 
 	var visitedDirs sync.Map
 	visitedDirs.Store(rootPath, true)
+	var seenFiles sync.Map
 
 	var wg sync.WaitGroup
-	s.scanDir(ctx, client, rootPath, rootPath, root, opts, sem, &wg, &filesScanned, &dirsScanned, &bytesFound, &errCount, excludeSet, &visitedDirs)
+	s.scanDir(ctx, client, rootPath, rootPath, root, opts, sem, &wg, &filesScanned, &dirsScanned, &bytesFound, &errCount, excludeSet, &visitedDirs, &seenFiles)
 	wg.Wait()
 
 	root.UpdateSizeRecursive()
@@ -197,6 +198,7 @@ func (s *SFTPScanner) scanDir(
 	filesScanned, dirsScanned, bytesFound, errCount *atomic.Int64,
 	excludeSet map[string]struct{},
 	visitedDirs *sync.Map,
+	seenFiles *sync.Map,
 ) {
 	select {
 	case <-ctx.Done():
@@ -220,10 +222,10 @@ func (s *SFTPScanner) scanDir(
 			go func(p string, d *model.DirNode) {
 				defer wg.Done()
 				defer func() { <-sem }()
-				s.scanDir(ctx, client, scanRoot, p, d, opts, sem, wg, filesScanned, dirsScanned, bytesFound, errCount, excludeSet, visitedDirs)
+				s.scanDir(ctx, client, scanRoot, p, d, opts, sem, wg, filesScanned, dirsScanned, bytesFound, errCount, excludeSet, visitedDirs, seenFiles)
 			}(path, dir)
 		default:
-			s.scanDir(ctx, client, scanRoot, path, dir, opts, sem, wg, filesScanned, dirsScanned, bytesFound, errCount, excludeSet, visitedDirs)
+			s.scanDir(ctx, client, scanRoot, path, dir, opts, sem, wg, filesScanned, dirsScanned, bytesFound, errCount, excludeSet, visitedDirs, seenFiles)
 		}
 	}
 
@@ -244,6 +246,9 @@ func (s *SFTPScanner) scanDir(
 
 		fullPath := cleanRemotePath(pathpkg.Join(dirPath, name))
 		mode := entry.Mode()
+		if isSpecialRemoteMode(mode) {
+			continue
+		}
 
 		if mode&os.ModeSymlink != 0 {
 			if opts.FollowSymlinks {
@@ -254,6 +259,9 @@ func (s *SFTPScanner) scanDir(
 					node.Mtime = entry.ModTime()
 					parent.AddChild(node)
 					filesScanned.Add(1)
+					continue
+				}
+				if isSpecialRemoteMode(targetInfo.Mode()) {
 					continue
 				}
 
@@ -281,12 +289,17 @@ func (s *SFTPScanner) scanDir(
 				}
 
 				size := targetInfo.Size()
+				flag := model.FlagSymlink
+				if _, loaded := seenFiles.LoadOrStore(resolvedPath, true); loaded {
+					flag |= model.FlagHardlink
+					size = 0
+				}
 				fileNode := &model.FileNode{
 					Name:   name,
 					Size:   size,
 					Usage:  estimateDiskUsage(size),
 					Mtime:  targetInfo.ModTime(),
-					Flag:   model.FlagSymlink,
+					Flag:   flag,
 					Parent: parent,
 				}
 				parent.AddChild(fileNode)
@@ -333,11 +346,23 @@ func (s *SFTPScanner) scanDir(
 		}
 
 		size := entry.Size()
+		flag := model.NodeFlag(0)
+		if opts.FollowSymlinks {
+			canonicalPath := fullPath
+			if resolvedPath, err := client.RealPath(fullPath); err == nil {
+				canonicalPath = cleanRemotePath(resolvedPath)
+			}
+			if _, loaded := seenFiles.LoadOrStore(canonicalPath, true); loaded {
+				flag |= model.FlagHardlink
+				size = 0
+			}
+		}
 		fileNode := &model.FileNode{
 			Name:   name,
 			Size:   size,
 			Usage:  estimateDiskUsage(size),
 			Mtime:  entry.ModTime(),
+			Flag:   flag,
 			Parent: parent,
 		}
 		parent.AddChild(fileNode)
@@ -406,6 +431,10 @@ func isWithinRemote(root, target string) bool {
 		prefix += "/"
 	}
 	return strings.HasPrefix(target, prefix)
+}
+
+func isSpecialRemoteMode(mode os.FileMode) bool {
+	return mode&(os.ModeDevice|os.ModeCharDevice|os.ModeSocket|os.ModeNamedPipe|os.ModeIrregular) != 0
 }
 
 func dialSFTP(ctx context.Context, cfg Config) (sftpClient, io.Closer, error) {

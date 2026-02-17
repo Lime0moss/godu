@@ -1,6 +1,7 @@
 package components
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/sadopc/godu/internal/model"
@@ -67,4 +68,30 @@ func TestRenderFileTypes_SmallWidth(t *testing.T) {
 			RenderFileTypes(theme, dir, false, true, w, 10)
 		})
 	}
+}
+
+func TestRenderFileTypes_ConcurrentCacheAccess(t *testing.T) {
+	theme := style.DefaultTheme()
+	root := &model.DirNode{FileNode: model.FileNode{Name: "root"}}
+	root.AddChild(&model.FileNode{Name: "a.txt", Size: 10, Usage: 10, Parent: root})
+	root.UpdateSizeRecursive()
+
+	const workers = 8
+	const iterations = 40
+	var wg sync.WaitGroup
+	wg.Add(workers)
+
+	for i := 0; i < workers; i++ {
+		go func(i int) {
+			defer wg.Done()
+			for j := 0; j < iterations; j++ {
+				if j%5 == 0 {
+					InvalidateFileTypeCache()
+				}
+				RenderFileTypes(theme, root, j%2 == 0, true, 80, 20)
+			}
+		}(i)
+	}
+
+	wg.Wait()
 }

@@ -112,6 +112,12 @@ func parseDir(data json.RawMessage, parent *model.DirNode, depth int) (*model.Di
 	if entry.Symlink {
 		dirFlag |= model.FlagSymlink
 	}
+	if err := validateSizeField("directory asize", entry.Asize); err != nil {
+		return nil, err
+	}
+	if err := validateSizeField("directory dsize", entry.Dsize); err != nil {
+		return nil, err
+	}
 
 	dir := &model.DirNode{
 		FileNode: model.FileNode{
@@ -162,6 +168,12 @@ func parseDir(data json.RawMessage, parent *model.DirNode, depth int) (*model.Di
 			if fileEntry.Symlink {
 				flag |= model.FlagSymlink
 			}
+			if err := validateSizeField("file asize", fileEntry.Asize); err != nil {
+				return nil, err
+			}
+			if err := validateSizeField("file dsize", fileEntry.Dsize); err != nil {
+				return nil, err
+			}
 
 			fileNode := &model.FileNode{
 				Name:   fileEntry.Name,
@@ -179,6 +191,13 @@ func parseDir(data json.RawMessage, parent *model.DirNode, depth int) (*model.Di
 
 	dir.UpdateSize()
 	return dir, nil
+}
+
+func validateSizeField(field string, value int64) error {
+	if value < 0 {
+		return fmt.Errorf("%s must be non-negative", field)
+	}
+	return nil
 }
 
 func trimLeadingWhitespace(data []byte) []byte {

@@ -3,10 +3,12 @@ package ops
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 
 	"github.com/sadopc/godu/internal/model"
@@ -91,7 +93,19 @@ func ExportJSON(root *model.DirNode, path string, version string) (retErr error)
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmpPath, path)
+	if err := os.Rename(tmpPath, path); err != nil {
+		// On Windows, Rename cannot replace an existing destination.
+		if runtime.GOOS != "windows" {
+			return err
+		}
+		if rmErr := os.Remove(path); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
+			return fmt.Errorf("cannot replace export file %s: %w", path, err)
+		}
+		if err := os.Rename(tmpPath, path); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func exportToWriter(root *model.DirNode, out io.Writer, version string) error {

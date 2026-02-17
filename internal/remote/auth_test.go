@@ -1,8 +1,11 @@
 package remote
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseSSHTarget(t *testing.T) {
@@ -98,5 +101,71 @@ func TestRemoveKnownHostEntries(t *testing.T) {
 	}
 	if !strings.Contains(out2222, "other.com ssh-ed25519 DDDD") {
 		t.Fatal("expected unrelated host entry to remain")
+	}
+}
+
+func TestLockIsStale(t *testing.T) {
+	lockPath := filepath.Join(t.TempDir(), "known_hosts.godu.lock")
+	if err := os.WriteFile(lockPath, []byte("123\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	old := time.Now().Add(-knownHostsLockStaleAfter - time.Second)
+	if err := os.Chtimes(lockPath, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	if !lockIsStale(lockPath, knownHostsLockStaleAfter) {
+		t.Fatal("expected old lock file to be considered stale")
+	}
+}
+
+func TestWithKnownHostsLock_RemovesStaleLock(t *testing.T) {
+	tmp := t.TempDir()
+	knownHosts := filepath.Join(tmp, "known_hosts")
+	if err := os.WriteFile(knownHosts, []byte(""), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	lockPath := knownHosts + ".godu.lock"
+	if err := os.WriteFile(lockPath, []byte("9999\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-knownHostsLockStaleAfter - time.Second)
+	if err := os.Chtimes(lockPath, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	called := false
+	if err := withKnownHostsLock(knownHosts, func() error {
+		called = true
+		return nil
+	}); err != nil {
+		t.Fatalf("withKnownHostsLock failed: %v", err)
+	}
+	if !called {
+		t.Fatal("expected callback to be executed")
+	}
+	if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
+		t.Fatalf("expected lock file to be removed, stat err=%v", err)
+	}
+}
+
+func TestWriteKnownHostsAtomic_ReplacesExisting(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "known_hosts")
+	if err := os.WriteFile(path, []byte("old"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := writeKnownHostsAtomic(path, []byte("new"), 0o600); err != nil {
+		t.Fatalf("writeKnownHostsAtomic failed: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "new" {
+		t.Fatalf("expected replaced file content %q, got %q", "new", string(data))
 	}
 }

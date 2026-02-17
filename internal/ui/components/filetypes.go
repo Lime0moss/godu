@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/sadopc/godu/internal/model"
@@ -28,10 +29,13 @@ type ftCache struct {
 }
 
 var lastFTCache ftCache
+var lastFTCacheMu sync.Mutex
 
 // InvalidateFileTypeCache clears the cached file type aggregation,
 // forcing a recompute on the next render.
 func InvalidateFileTypeCache() {
+	lastFTCacheMu.Lock()
+	defer lastFTCacheMu.Unlock()
 	lastFTCache = ftCache{}
 }
 
@@ -42,12 +46,19 @@ func RenderFileTypes(theme style.Theme, dir *model.DirNode, useApparent bool, sh
 	}
 
 	var stats []CategoryStats
+	lastFTCacheMu.Lock()
 	if lastFTCache.dir == dir && lastFTCache.useApparent == useApparent && lastFTCache.showHidden == showHidden {
-		stats = lastFTCache.stats
+		stats = append([]CategoryStats(nil), lastFTCache.stats...)
 	} else {
 		stats = aggregateFileTypes(dir, useApparent, showHidden)
-		lastFTCache = ftCache{dir: dir, useApparent: useApparent, showHidden: showHidden, stats: stats}
+		lastFTCache = ftCache{
+			dir:         dir,
+			useApparent: useApparent,
+			showHidden:  showHidden,
+			stats:       append([]CategoryStats(nil), stats...),
+		}
 	}
+	lastFTCacheMu.Unlock()
 
 	sort.Slice(stats, func(i, j int) bool {
 		return stats[i].TotalSize > stats[j].TotalSize

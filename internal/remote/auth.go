@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -16,6 +17,11 @@ import (
 	"golang.org/x/crypto/ssh/agent"
 	"golang.org/x/crypto/ssh/knownhosts"
 	"golang.org/x/term"
+)
+
+const (
+	knownHostsLockTimeout    = 5 * time.Second
+	knownHostsLockStaleAfter = 30 * time.Second
 )
 
 var defaultPrivateKeyFiles = []string{
@@ -201,16 +207,58 @@ func updateKnownHosts(path string, mutate func([]byte) ([]byte, error)) error {
 			return err
 		}
 
-		if err := os.WriteFile(path, updated, 0o600); err != nil {
+		if err := writeKnownHostsAtomic(path, updated, 0o600); err != nil {
 			return fmt.Errorf("cannot write known_hosts: %w", err)
 		}
 		return nil
 	})
 }
 
+func writeKnownHostsAtomic(path string, data []byte, perm os.FileMode) (retErr error) {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".godu-known-hosts-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer func() {
+		if retErr != nil {
+			_ = tmp.Close()
+			_ = os.Remove(tmpPath)
+		}
+	}()
+
+	if _, err := tmp.Write(data); err != nil {
+		return err
+	}
+	if err := tmp.Chmod(perm); err != nil {
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+
+	if err := os.Rename(tmpPath, path); err != nil {
+		// On Windows, rename cannot replace an existing file.
+		if runtime.GOOS != "windows" {
+			return err
+		}
+		if rmErr := os.Remove(path); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
+			return err
+		}
+		if err := os.Rename(tmpPath, path); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func withKnownHostsLock(path string, fn func() error) error {
 	lockPath := path + ".godu.lock"
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(knownHostsLockTimeout)
 
 	for {
 		lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
@@ -223,11 +271,26 @@ func withKnownHostsLock(path string, fn func() error) error {
 		if !errors.Is(err, os.ErrExist) {
 			return fmt.Errorf("cannot lock known_hosts: %w", err)
 		}
+		if lockIsStale(lockPath, knownHostsLockStaleAfter) {
+			_ = os.Remove(lockPath)
+			continue
+		}
 		if time.Now().After(deadline) {
 			return fmt.Errorf("timed out waiting for known_hosts lock")
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
+}
+
+func lockIsStale(path string, staleAfter time.Duration) bool {
+	if staleAfter <= 0 {
+		return false
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	return time.Since(info.ModTime()) > staleAfter
 }
 
 func removeKnownHostEntries(data []byte, host string, port int) []byte {

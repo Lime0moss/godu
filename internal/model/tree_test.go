@@ -81,6 +81,20 @@ func TestDirNode_UpdateSize(t *testing.T) {
 	}
 }
 
+func TestDirNode_UpdateSize_SaturatesOnOverflow(t *testing.T) {
+	dir := &DirNode{FileNode: FileNode{Name: "parent"}}
+	dir.AddChild(&FileNode{Name: "a", Size: maxInt64, Usage: maxInt64, Parent: dir})
+	dir.AddChild(&FileNode{Name: "b", Size: 1, Usage: 1, Parent: dir})
+	dir.UpdateSize()
+
+	if dir.Size != maxInt64 {
+		t.Errorf("Size overflow should saturate to maxInt64, got %d", dir.Size)
+	}
+	if dir.Usage != maxInt64 {
+		t.Errorf("Usage overflow should saturate to maxInt64, got %d", dir.Usage)
+	}
+}
+
 func TestDirNode_RemoveChild(t *testing.T) {
 	root := &DirNode{FileNode: FileNode{Name: "/root"}}
 	a := &FileNode{Name: "a.txt", Size: 100, Usage: 100, Parent: root}

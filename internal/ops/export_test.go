@@ -113,3 +113,35 @@ func TestExportJSON_DirFlags(t *testing.T) {
 		t.Fatalf("expected read_error flag in export: %s", data)
 	}
 }
+
+func TestExportJSON_OverwriteExistingFile(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "scan.json")
+
+	rootA := &model.DirNode{FileNode: model.FileNode{Name: "/root"}}
+	rootA.AddChild(&model.FileNode{Name: "a.txt", Size: 1, Usage: 1, Parent: rootA})
+	rootA.UpdateSizeRecursive()
+	if err := ExportJSON(rootA, path, "test"); err != nil {
+		t.Fatalf("first export failed: %v", err)
+	}
+
+	rootB := &model.DirNode{FileNode: model.FileNode{Name: "/root"}}
+	rootB.AddChild(&model.FileNode{Name: "b.txt", Size: 7, Usage: 7, Parent: rootB})
+	rootB.UpdateSizeRecursive()
+	if err := ExportJSON(rootB, path, "test"); err != nil {
+		t.Fatalf("second export failed: %v", err)
+	}
+
+	imported, err := ImportJSON(path)
+	if err != nil {
+		t.Fatalf("import failed: %v", err)
+	}
+	if imported.GetSize() != 7 {
+		t.Fatalf("expected overwritten export size 7, got %d", imported.GetSize())
+	}
+
+	children := imported.GetChildren()
+	if len(children) != 1 || children[0].GetName() != "b.txt" {
+		t.Fatalf("expected overwritten export to contain b.txt, got %+v", children)
+	}
+}
