@@ -56,7 +56,7 @@ func main() {
 				fmt.Fprintf(os.Stderr, "Error importing: %v\n", err)
 				os.Exit(1)
 			}
-			if err := ops.ExportJSON(root, *exportPath); err != nil {
+			if err := ops.ExportJSON(root, *exportPath, version); err != nil {
 				fmt.Fprintf(os.Stderr, "Error exporting: %v\n", err)
 				os.Exit(1)
 			}
@@ -65,6 +65,7 @@ func main() {
 		}
 
 		app := ui.NewAppFromImport(*importPath)
+		app.Version = version
 		p := tea.NewProgram(app, tea.WithAltScreen())
 		if _, err := p.Run(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -121,7 +122,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Scan error: %v\n", err)
 			os.Exit(1)
 		}
-		if err := ops.ExportJSON(root, *exportPath); err != nil {
+		if err := ops.ExportJSON(root, *exportPath, version); err != nil {
 			fmt.Fprintf(os.Stderr, "Export error: %v\n", err)
 			os.Exit(1)
 		}
@@ -132,6 +133,7 @@ func main() {
 	// Interactive TUI mode
 	app := ui.NewApp(absPath, opts)
 	app.ExportPath = "godu-export.json"
+	app.Version = version
 
 	p := tea.NewProgram(app, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {

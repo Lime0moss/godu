@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/serdar/godu/internal/model"
 )
@@ -68,7 +69,7 @@ func (ew *errWriter) seek(offset int64, whence int) {
 }
 
 // ExportJSON exports the tree to ncdu-compatible JSON format.
-func ExportJSON(root *model.DirNode, path string) (retErr error) {
+func ExportJSON(root *model.DirNode, path string, version string) (retErr error) {
 	f, err := os.Create(path)
 	if err != nil {
 		return fmt.Errorf("cannot create export file: %w", err)
@@ -83,9 +84,13 @@ func ExportJSON(root *model.DirNode, path string) (retErr error) {
 
 	// Write opening bracket and header
 	ew.WriteString("[1, 0, ")
+	if version == "" {
+		version = "dev"
+	}
 	header := ncduHeader{
-		Progname: "godu",
-		Progver:  "1.0",
+		Progname:  "godu",
+		Progver:   version,
+		Timestamp: time.Now().Unix(),
 	}
 	enc := json.NewEncoder(ew)
 	if err := enc.Encode(header); err != nil {

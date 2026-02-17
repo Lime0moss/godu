@@ -2,6 +2,7 @@ package components
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -63,13 +64,7 @@ func RenderTreemap(theme style.Theme, dir *model.DirNode, useApparent bool, show
 	}
 
 	// Sort descending
-	for i := 0; i < len(items)-1; i++ {
-		for j := i + 1; j < len(items); j++ {
-			if items[j].size > items[i].size {
-				items[i], items[j] = items[j], items[i]
-			}
-		}
-	}
+	sort.Slice(items, func(i, j int) bool { return items[i].size > items[j].size })
 
 	maxItems := (width * height) / 8
 	if maxItems < 5 {

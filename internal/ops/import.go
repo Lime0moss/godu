@@ -4,21 +4,41 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/serdar/godu/internal/model"
 )
 
+// validateName rejects names that could escape the directory tree.
+func validateName(name string) error {
+	if name == "" {
+		return fmt.Errorf("empty entry name")
+	}
+	if name == "." || name == ".." {
+		return fmt.Errorf("invalid entry name: %q", name)
+	}
+	if strings.ContainsAny(name, "/\\") {
+		return fmt.Errorf("entry name contains path separator: %q", name)
+	}
+	if filepath.Base(name) != name {
+		return fmt.Errorf("entry name is not a simple filename: %q", name)
+	}
+	return nil
+}
+
 // ImportJSON imports a tree from ncdu-compatible JSON format.
 func ImportJSON(path string) (*model.DirNode, error) {
-	data, err := os.ReadFile(path)
+	f, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("cannot open import file: %w", err)
 	}
+	defer f.Close()
 
 	// Parse the top-level array: [version, minor, header, rootDir]
 	var raw []json.RawMessage
-	if err := json.Unmarshal(data, &raw); err != nil {
+	if err := json.NewDecoder(f).Decode(&raw); err != nil {
 		return nil, fmt.Errorf("invalid JSON: %w", err)
 	}
 
@@ -53,6 +73,16 @@ func parseDir(data json.RawMessage, parent *model.DirNode) (*model.DirNode, erro
 		return nil, fmt.Errorf("cannot parse directory entry: %w", err)
 	}
 
+	// Root entry (parent==nil) uses an absolute path per ncdu convention;
+	// non-root entries must be simple filenames.
+	if parent != nil {
+		if err := validateName(entry.Name); err != nil {
+			return nil, fmt.Errorf("invalid directory entry: %w", err)
+		}
+	} else {
+		entry.Name = filepath.Clean(entry.Name)
+	}
+
 	dir := &model.DirNode{
 		FileNode: model.FileNode{
 			Name:   entry.Name,
@@ -85,6 +115,10 @@ func parseDir(data json.RawMessage, parent *model.DirNode) (*model.DirNode, erro
 			var fileEntry ncduEntry
 			if err := json.Unmarshal(child, &fileEntry); err != nil {
 				return nil, fmt.Errorf("cannot parse file entry: %w", err)
+			}
+
+			if err := validateName(fileEntry.Name); err != nil {
+				return nil, fmt.Errorf("invalid file entry: %w", err)
 			}
 
 			var flag model.NodeFlag

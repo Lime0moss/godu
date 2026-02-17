@@ -64,6 +64,7 @@ type App struct {
 	ScanOptions scanner.ScanOptions
 	ImportPath  string
 	ExportPath  string
+	Version     string
 
 	state    AppState
 	viewMode ViewMode
@@ -84,17 +85,33 @@ type App struct {
 
 	useApparent bool
 	showHidden  bool
+	imported    bool
 
 	scanProgress   scanner.Progress
 	progressMu     sync.Mutex
 	latestProgress scanner.Progress
 	scanCancel     context.CancelFunc
+	scanCancelMu   sync.Mutex
 
 	theme  style.Theme
 	keys   KeyMap
 	layout style.Layout
 
 	errorMsg string
+}
+
+func (a *App) setScanCancel(cancel context.CancelFunc) {
+	a.scanCancelMu.Lock()
+	a.scanCancel = cancel
+	a.scanCancelMu.Unlock()
+}
+
+func (a *App) callScanCancel() {
+	a.scanCancelMu.Lock()
+	if a.scanCancel != nil {
+		a.scanCancel()
+	}
+	a.scanCancelMu.Unlock()
 }
 
 // NewApp creates a new App model.
@@ -123,6 +140,7 @@ func NewAppFromImport(importPath string) *App {
 		marked:      make(map[string]bool),
 		useApparent: false,
 		showHidden:  true,
+		imported:    true,
 		theme:       style.DefaultTheme(),
 		keys:        DefaultKeyMap(),
 	}
@@ -201,18 +219,14 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (a *App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if key.Matches(msg, a.keys.ForceQuit) {
-		if a.scanCancel != nil {
-			a.scanCancel()
-		}
+		a.callScanCancel()
 		return a, tea.Quit
 	}
 
 	switch a.state {
 	case StateScanning:
 		if key.Matches(msg, a.keys.Quit) {
-			if a.scanCancel != nil {
-				a.scanCancel()
-			}
+			a.callScanCancel()
 			return a, tea.Quit
 		}
 		return a, nil
@@ -279,6 +293,7 @@ func (a *App) handleBrowsingKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		a.refreshSorted()
 	case key.Matches(msg, a.keys.ToggleHidden):
 		a.showHidden = !a.showHidden
+		a.ScanOptions.ShowHidden = a.showHidden
 		a.clearMarks()
 		a.refreshSorted()
 
@@ -488,7 +503,7 @@ func (a *App) getParentSize() int64 {
 func (a *App) scanCmd() tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithCancel(context.Background())
-		a.scanCancel = cancel
+		a.setScanCancel(cancel)
 
 		progressCh := make(chan scanner.Progress, 10)
 
@@ -523,6 +538,10 @@ func (a *App) tickCmd() tea.Cmd {
 }
 
 func (a *App) prepareDelete() tea.Cmd {
+	if a.imported {
+		a.errorMsg = "Delete is disabled in import mode"
+		return nil
+	}
 	if a.currentDir == nil {
 		return nil
 	}
@@ -564,13 +583,14 @@ func (a *App) prepareDelete() tea.Cmd {
 func (a *App) executeDelete() tea.Cmd {
 	items := a.markedItems
 	currentDir := a.currentDir
+	rootPath := a.root.Path()
 
 	return func() tea.Msg {
 		var deleted []string
 		var errors []error
 
 		for _, item := range items {
-			err := ops.Delete(item.Path)
+			err := ops.Delete(item.Path, rootPath)
 			if err != nil {
 				errors = append(errors, err)
 			} else {
@@ -596,8 +616,9 @@ func (a *App) exportCmd() tea.Cmd {
 	a.state = StateExporting
 	root := a.root
 
+	version := a.Version
 	return func() tea.Msg {
-		err := ops.ExportJSON(root, exportPath)
+		err := ops.ExportJSON(root, exportPath, version)
 		return ExportDoneMsg{Path: exportPath, Err: err}
 	}
 }

@@ -135,7 +135,8 @@ func (s *ParallelScanner) Scan(ctx context.Context, path string, opts ScanOption
 		close(progressDone)
 		progressWg.Wait()
 		elapsed := time.Since(startTime)
-		progress <- Progress{
+		select {
+		case progress <- Progress{
 			FilesScanned: filesScanned.Load(),
 			DirsScanned:  dirsScanned.Load(),
 			BytesFound:   bytesFound.Load(),
@@ -143,6 +144,8 @@ func (s *ParallelScanner) Scan(ctx context.Context, path string, opts ScanOption
 			Done:         true,
 			StartTime:    startTime,
 			Duration:     elapsed,
+		}:
+		default:
 		}
 	}
 

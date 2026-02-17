@@ -56,24 +56,17 @@ func Percent(part, total int64) float64 {
 	return float64(part) / float64(total) * 100
 }
 
-// TruncateString truncates a string to maxLen, adding "..." if needed.
+// TruncateString truncates a string to maxLen runes, adding "..." if needed.
 func TruncateString(s string, maxLen int) string {
-	if maxLen <= 3 {
-		if maxLen <= 0 {
-			return ""
-		}
-		return s[:min(len(s), maxLen)]
+	if maxLen <= 0 {
+		return ""
 	}
 	runes := []rune(s)
 	if len(runes) <= maxLen {
 		return s
 	}
-	return string(runes[:maxLen-3]) + "..."
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
+	if maxLen <= 3 {
+		return string(runes[:maxLen])
 	}
-	return b
+	return string(runes[:maxLen-3]) + "..."
 }

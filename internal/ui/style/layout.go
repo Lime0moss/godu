@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // Layout manages the arrangement of UI components within terminal dimensions.
@@ -28,8 +29,8 @@ func (l Layout) ContentHeight() int {
 
 // ContentWidth returns the width available for the main content area.
 func (l Layout) ContentWidth() int {
-	if l.Width < 20 {
-		return 20
+	if l.Width < 1 {
+		return 1
 	}
 	return l.Width
 }
@@ -49,8 +50,8 @@ func (l Layout) BarWidth() int {
 // NameWidth returns the width available for file/dir names.
 func (l Layout) NameWidth() int {
 	w := l.ContentWidth() - l.rowOverhead() - l.BarWidth()
-	if w < 8 {
-		w = 8
+	if w < 1 {
+		w = 1
 	}
 	return w
 }
@@ -69,12 +70,14 @@ func (l Layout) Center(content string) string {
 	return lipgloss.PlaceHorizontal(l.Width, lipgloss.Center, content)
 }
 
-// FullWidth pads a string with spaces to reach exactly the target visual width.
-// If the string is already wider, it is returned as-is (no truncation).
+// FullWidth pads or truncates a string to reach exactly the target visual width.
 func FullWidth(s string, width int) string {
 	visLen := lipgloss.Width(s)
-	if visLen >= width {
-		return s
+	if visLen > width {
+		return ansi.Truncate(s, width, "")
 	}
-	return s + strings.Repeat(" ", width-visLen)
+	if visLen < width {
+		return s + strings.Repeat(" ", width-visLen)
+	}
+	return s
 }
