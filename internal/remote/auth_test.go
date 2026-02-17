@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/crypto/ssh/knownhosts"
 )
 
 func TestParseSSHTarget(t *testing.T) {
@@ -101,6 +103,47 @@ func TestRemoveKnownHostEntries(t *testing.T) {
 	}
 	if !strings.Contains(out2222, "other.com ssh-ed25519 DDDD") {
 		t.Fatal("expected unrelated host entry to remain")
+	}
+}
+
+func TestMatchesHashedHostPattern(t *testing.T) {
+	host := "example.com"
+	hashed := knownhosts.HashHostname(host)
+
+	if !matchesHashedHostPattern(hashed, host) {
+		t.Fatal("expected hashed host token to match original host")
+	}
+	if matchesHashedHostPattern(hashed, "other.example.com") {
+		t.Fatal("expected hashed host token not to match different host")
+	}
+}
+
+func TestRemoveKnownHostEntries_RemovesHashedMatches(t *testing.T) {
+	host := "example.com"
+	hashedDefault := knownhosts.HashHostname(knownhosts.Normalize(host))
+	hashedCustomPort := knownhosts.HashHostname(knownhosts.Normalize("[example.com]:2222"))
+
+	input := strings.Join([]string{
+		hashedDefault + " ssh-ed25519 AAAA",
+		hashedCustomPort + " ssh-ed25519 BBBB",
+		"other.com ssh-ed25519 CCCC",
+		"",
+	}, "\n")
+
+	out22 := string(removeKnownHostEntries([]byte(input), host, 22))
+	if strings.Contains(out22, hashedDefault) {
+		t.Fatal("expected hashed default-port entry to be removed")
+	}
+	if !strings.Contains(out22, hashedCustomPort) {
+		t.Fatal("expected hashed custom-port entry to remain")
+	}
+
+	out2222 := string(removeKnownHostEntries([]byte(input), host, 2222))
+	if strings.Contains(out2222, hashedCustomPort) {
+		t.Fatal("expected hashed custom-port entry to be removed")
+	}
+	if !strings.Contains(out2222, hashedDefault) {
+		t.Fatal("expected hashed default-port entry to remain")
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pkg/sftp"
 	"github.com/sadopc/godu/internal/model"
 	"github.com/sadopc/godu/internal/scanner"
 	"golang.org/x/crypto/ssh"
@@ -214,11 +215,41 @@ func TestScanWithClient_UsageUsesBlockEstimate(t *testing.T) {
 	if tiny.GetSize() != 1 {
 		t.Fatalf("expected size 1, got %d", tiny.GetSize())
 	}
-	if tiny.GetUsage() != remoteBlockSize {
-		t.Fatalf("expected usage %d, got %d", remoteBlockSize, tiny.GetUsage())
+	if tiny.GetUsage() != defaultRemoteBlockSize {
+		t.Fatalf("expected usage %d, got %d", defaultRemoteBlockSize, tiny.GetUsage())
 	}
-	if root.GetUsage() != remoteBlockSize {
-		t.Fatalf("expected root usage %d, got %d", remoteBlockSize, root.GetUsage())
+	if root.GetUsage() != defaultRemoteBlockSize {
+		t.Fatalf("expected root usage %d, got %d", defaultRemoteBlockSize, root.GetUsage())
+	}
+	if root.GetFlag()&model.FlagUsageEstimated == 0 {
+		t.Fatal("expected root to be marked with FlagUsageEstimated")
+	}
+}
+
+func TestScanWithClient_UsageUsesStatVFSBlockSizeWhenAvailable(t *testing.T) {
+	client := newFakeSFTP(map[string]fakeNode{
+		"/root":          {mode: os.ModeDir, children: []string{"tiny.txt"}},
+		"/root/tiny.txt": {mode: 0, size: 1},
+	})
+	client.statVFS = &sftp.StatVFS{Frsize: 8192}
+
+	s := &SFTPScanner{cfg: Config{Target: "user@host", Port: 22}, dial: fakeDial(client)}
+	root, err := s.Scan(context.Background(), "/root", scanner.ScanOptions{
+		ShowHidden: true,
+	}, nil)
+	if err != nil {
+		t.Fatalf("scan failed: %v", err)
+	}
+
+	tiny := findNode(root, "tiny.txt")
+	if tiny == nil {
+		t.Fatal("expected tiny.txt node")
+	}
+	if tiny.GetUsage() != 8192 {
+		t.Fatalf("expected usage 8192, got %d", tiny.GetUsage())
+	}
+	if root.GetUsage() != 8192 {
+		t.Fatalf("expected root usage 8192, got %d", root.GetUsage())
 	}
 }
 
@@ -297,13 +328,13 @@ func TestEstimateDiskUsage(t *testing.T) {
 	}{
 		{size: 0, want: 0},
 		{size: -1, want: 0},
-		{size: 1, want: remoteBlockSize},
-		{size: remoteBlockSize, want: remoteBlockSize},
-		{size: remoteBlockSize + 1, want: 2 * remoteBlockSize},
+		{size: 1, want: defaultRemoteBlockSize},
+		{size: defaultRemoteBlockSize, want: defaultRemoteBlockSize},
+		{size: defaultRemoteBlockSize + 1, want: 2 * defaultRemoteBlockSize},
 	}
 
 	for _, tt := range tests {
-		if got := estimateDiskUsage(tt.size); got != tt.want {
+		if got := estimateDiskUsage(tt.size, defaultRemoteBlockSize); got != tt.want {
 			t.Fatalf("estimateDiskUsage(%d) = %d, want %d", tt.size, got, tt.want)
 		}
 	}
@@ -396,7 +427,8 @@ type fakeNode struct {
 }
 
 type fakeSFTP struct {
-	nodes map[string]fakeNode
+	nodes   map[string]fakeNode
+	statVFS *sftp.StatVFS
 }
 
 func newFakeSFTP(nodes map[string]fakeNode) *fakeSFTP {
@@ -432,6 +464,13 @@ func (f *fakeSFTP) ReadDir(path string) ([]os.FileInfo, error) {
 		out = append(out, fakeInfo{name: child, size: childNode.size, mode: childNode.mode, mtime: childNode.mtime})
 	}
 	return out, nil
+}
+
+func (f *fakeSFTP) StatVFS(string) (*sftp.StatVFS, error) {
+	if f.statVFS == nil {
+		return nil, fmt.Errorf("statvfs unavailable")
+	}
+	return f.statVFS, nil
 }
 
 func (f *fakeSFTP) Stat(path string) (os.FileInfo, error) {

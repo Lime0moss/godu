@@ -12,15 +12,16 @@ import (
 
 // StatusInfo holds the current state for the status bar.
 type StatusInfo struct {
-	CurrentDir  *model.DirNode
-	ItemCount   int
-	MarkedCount int
-	MarkedSize  int64
-	UseApparent bool
-	ShowHidden  bool
-	SortField   model.SortField
-	ViewMode    int
-	ErrorMsg    string
+	CurrentDir     *model.DirNode
+	ItemCount      int
+	MarkedCount    int
+	MarkedSize     int64
+	UsageEstimated bool
+	UseApparent    bool
+	ShowHidden     bool
+	SortField      model.SortField
+	ViewMode       int
+	ErrorMsg       string
 }
 
 // RenderStatusBar renders the bottom status bar.
@@ -44,6 +45,8 @@ func RenderStatusBar(theme style.Theme, info StatusInfo, width int) string {
 		sizeLabel := "disk"
 		if info.UseApparent {
 			sizeLabel = "apparent"
+		} else if info.UsageEstimated {
+			sizeLabel = "disk~"
 		}
 		parts = append(parts, fmt.Sprintf("%s %s", util.FormatSize(size), sizeLabel))
 	}

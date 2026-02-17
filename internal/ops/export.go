@@ -31,14 +31,15 @@ type ncduHeader struct {
 }
 
 type ncduEntry struct {
-	Name    string `json:"name"`
-	Asize   int64  `json:"asize"`
-	Dsize   int64  `json:"dsize,omitempty"`
-	Ino     uint64 `json:"ino,omitempty"`
-	Nlink   int    `json:"nlink,omitempty"`
-	Hlnkc   bool   `json:"hlnkc,omitempty"`
-	Err     bool   `json:"read_error,omitempty"`
-	Symlink bool   `json:"symlink,omitempty"`
+	Name           string `json:"name"`
+	Asize          int64  `json:"asize"`
+	Dsize          int64  `json:"dsize,omitempty"`
+	Ino            uint64 `json:"ino,omitempty"`
+	Nlink          int    `json:"nlink,omitempty"`
+	Hlnkc          bool   `json:"hlnkc,omitempty"`
+	Err            bool   `json:"read_error,omitempty"`
+	Symlink        bool   `json:"symlink,omitempty"`
+	UsageEstimated bool   `json:"usage_estimated,omitempty"`
 }
 
 // errWriter wraps an io.Writer and captures the first write error.
@@ -162,6 +163,9 @@ func writeDir(ew *errWriter, dir *model.DirNode) {
 	if dir.Flag&model.FlagSymlink != 0 {
 		entry.Symlink = true
 	}
+	if dir.Flag&model.FlagUsageEstimated != 0 {
+		entry.UsageEstimated = true
+	}
 	data, err := json.Marshal(entry)
 	if err != nil {
 		ew.err = err
@@ -194,6 +198,9 @@ func writeDir(ew *errWriter, dir *model.DirNode) {
 			}
 			if c.Flag&model.FlagSymlink != 0 {
 				entry.Symlink = true
+			}
+			if c.Flag&model.FlagUsageEstimated != 0 {
+				entry.UsageEstimated = true
 			}
 			data, err := json.Marshal(entry)
 			if err != nil {

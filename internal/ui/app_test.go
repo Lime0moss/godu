@@ -2,6 +2,7 @@ package ui
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -69,5 +70,53 @@ func TestAppMarkedSize_ComputesFromVisibleItems(t *testing.T) {
 	app.useApparent = true
 	if got := app.markedSize(items); got != 10 {
 		t.Fatalf("expected apparent marked size 10, got %d", got)
+	}
+}
+
+func TestRescan_DisabledInImportMode(t *testing.T) {
+	app := NewAppFromImport("scan.json")
+	root := &model.DirNode{FileNode: model.FileNode{Name: "/imported"}}
+	root.UpdateSize()
+	app.root = root
+	app.currentDir = root
+	app.refreshSorted()
+	app.state = StateBrowsing
+
+	_, cmd := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if cmd != nil {
+		t.Fatal("expected no command when rescan is disabled in import mode")
+	}
+	if app.state != StateBrowsing {
+		t.Fatalf("expected browsing state, got %v", app.state)
+	}
+	if !strings.Contains(app.statusMsg, "disabled") {
+		t.Fatalf("expected disabled status message, got %q", app.statusMsg)
+	}
+}
+
+func TestToggleHidden_TriggersRescanWhenMissingFromData(t *testing.T) {
+	opts := scanner.DefaultOptions()
+	opts.ShowHidden = false
+	app := NewApp("/tmp", opts)
+	root := &model.DirNode{FileNode: model.FileNode{Name: "/tmp"}}
+	root.AddChild(&model.FileNode{Name: "visible.txt", Parent: root})
+	root.UpdateSizeRecursive()
+	app.root = root
+	app.currentDir = root
+	app.refreshSorted()
+	app.state = StateBrowsing
+
+	_, cmd := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'.'}})
+	if cmd == nil {
+		t.Fatal("expected rescan command when showing hidden files requires a new scan")
+	}
+	if app.state != StateScanning {
+		t.Fatalf("expected scanning state, got %v", app.state)
+	}
+	if !app.showHidden {
+		t.Fatal("expected showHidden to be enabled")
+	}
+	if !app.ScanOptions.ShowHidden {
+		t.Fatal("expected scan options to include hidden files for rescan")
 	}
 }

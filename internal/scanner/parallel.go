@@ -2,6 +2,7 @@ package scanner
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -127,7 +128,10 @@ func (s *ParallelScanner) Scan(ctx context.Context, path string, opts ScanOption
 	wg.Wait()
 
 	// Bottom-up size calculation after all goroutines complete
-	root.UpdateSizeRecursive()
+	if err := ctx.Err(); err != nil {
+		return root, err
+	}
+	root.UpdateSizeRecursiveContext(ctx)
 
 	// Send final progress
 	if progress != nil {
@@ -174,12 +178,13 @@ func (s *ParallelScanner) scanDir(
 	default:
 	}
 
-	entries, err := os.ReadDir(dirPath)
+	dir, err := os.Open(dirPath)
 	if err != nil {
 		parent.Flag |= model.FlagError
 		errCount.Add(1)
 		return
 	}
+	defer dir.Close()
 
 	dirsScanned.Add(1)
 
@@ -200,208 +205,221 @@ func (s *ParallelScanner) scanDir(
 		}
 	}
 
-	for _, entry := range entries {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
+	for {
+		entries, readErr := dir.ReadDir(256)
 
-		name := entry.Name()
+		for _, entry := range entries {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
 
-		// Skip excluded patterns
-		if _, excluded := excludeSet[name]; excluded {
-			continue
-		}
+			name := entry.Name()
 
-		// Skip hidden files/dirs when ShowHidden is false
-		if !opts.ShowHidden && len(name) > 0 && name[0] == '.' {
-			continue
-		}
+			// Skip excluded patterns
+			if _, excluded := excludeSet[name]; excluded {
+				continue
+			}
 
-		fullPath := filepath.Join(dirPath, name)
-		info, err := entry.Info()
-		if err != nil {
-			errCount.Add(1)
-			continue
-		}
+			// Skip hidden files/dirs when ShowHidden is false
+			if !opts.ShowHidden && len(name) > 0 && name[0] == '.' {
+				continue
+			}
 
-		mode := entry.Type()
-		infoMode := info.Mode()
-		// Some filesystems may return unknown dirent types; use FileInfo mode as fallback.
-		if mode == 0 {
-			mode = infoMode.Type()
-		}
-		if infoMode.IsDir() {
-			mode |= os.ModeDir
-		}
-		if infoMode&os.ModeSymlink != 0 {
-			mode |= os.ModeSymlink
-		}
+			fullPath := filepath.Join(dirPath, name)
+			info, err := entry.Info()
+			if err != nil {
+				errCount.Add(1)
+				continue
+			}
 
-		// Skip special files (devices, sockets, pipes, irregular).
-		// Check both dirent type and FileInfo mode for DT_UNKNOWN filesystems.
-		if isSpecialMode(mode) || isSpecialMode(infoMode) {
-			continue
-		}
+			mode := entry.Type()
+			infoMode := info.Mode()
+			// Some filesystems may return unknown dirent types; use FileInfo mode as fallback.
+			if mode == 0 {
+				mode = infoMode.Type()
+			}
+			if infoMode.IsDir() {
+				mode |= os.ModeDir
+			}
+			if infoMode&os.ModeSymlink != 0 {
+				mode |= os.ModeSymlink
+			}
 
-		if mode.IsDir() {
-			scanPath := fullPath
-			if opts.FollowSymlinks {
-				if resolvedPath, err := filepath.EvalSymlinks(fullPath); err == nil {
-					scanPath = resolvedPath
+			// Skip special files (devices, sockets, pipes, irregular).
+			// Check both dirent type and FileInfo mode for DT_UNKNOWN filesystems.
+			if isSpecialMode(mode) || isSpecialMode(infoMode) {
+				continue
+			}
+
+			if mode.IsDir() {
+				scanPath := fullPath
+				if opts.FollowSymlinks {
+					if resolvedPath, err := filepath.EvalSymlinks(fullPath); err == nil {
+						scanPath = resolvedPath
+					}
 				}
-			}
 
-			childDir := &model.DirNode{
-				FileNode: model.FileNode{
-					Name:   name,
-					Parent: parent,
-				},
-			}
-			childDir.Mtime = info.ModTime()
-
-			parent.AddChild(childDir)
-
-			// Already visited via another path (e.g. followed symlink): keep node,
-			// but skip recursion so size is not double-counted.
-			if _, loaded := visitedDirs.LoadOrStore(scanPath, true); loaded {
-				continue
-			}
-
-			spawnScan(scanPath, childDir)
-		} else if mode&os.ModeSymlink != 0 && opts.FollowSymlinks {
-			// Resolve symlink — if it points to a directory, recurse into it
-			resolvedPath, err := filepath.EvalSymlinks(fullPath)
-			if err != nil {
-				errCount.Add(1)
-				parent.AddChild(model.NewBrokenSymlinkNode(name, parent))
-				filesScanned.Add(1)
-				continue
-			}
-			targetInfo, err := os.Stat(resolvedPath)
-			if err != nil {
-				errCount.Add(1)
-				parent.AddChild(model.NewBrokenSymlinkNode(name, parent))
-				filesScanned.Add(1)
-				continue
-			}
-			if isSpecialMode(targetInfo.Mode()) {
-				continue
-			}
-			if targetInfo.IsDir() {
 				childDir := &model.DirNode{
 					FileNode: model.FileNode{
 						Name:   name,
-						Mtime:  targetInfo.ModTime(),
-						Flag:   model.FlagSymlink,
 						Parent: parent,
 					},
 				}
+				childDir.Mtime = info.ModTime()
+
 				parent.AddChild(childDir)
 
-				// Avoid duplicate traversal for symlinks pointing inside the scan root.
-				// The canonical in-tree directory will be scanned via normal traversal.
-				if isWithin(scanRoot, resolvedPath) {
+				// Already visited via another path (e.g. followed symlink): keep node,
+				// but skip recursion so size is not double-counted.
+				if _, loaded := visitedDirs.LoadOrStore(scanPath, true); loaded {
 					continue
 				}
 
-				// If target was already scanned, don't recurse again.
-				if _, loaded := visitedDirs.LoadOrStore(resolvedPath, true); loaded {
-					continue
-				}
-
-				spawnScan(resolvedPath, childDir)
-				continue
-			}
-			// Symlink to file — fall through to file handling below
-			info := targetInfo
-
-			flag := model.FlagSymlink
-			si := getStatInfo(info)
-
-			if si.ok {
-				// Dedup: symlink target may alias a regular file (even with Nlink==1)
-				inodeMu.Lock()
-				ik := inodeKey{dev: si.dev, ino: si.inode}
-				if _, seen := inodeMap[ik]; seen {
-					flag |= model.FlagHardlink
-					inodeMu.Unlock()
-					fileNode := &model.FileNode{
-						Name:   name,
-						Size:   0,
-						Usage:  0,
-						Mtime:  info.ModTime(),
-						Inode:  si.inode,
-						Flag:   flag,
-						Parent: parent,
-					}
-					parent.AddChild(fileNode)
+				spawnScan(scanPath, childDir)
+			} else if mode&os.ModeSymlink != 0 && opts.FollowSymlinks {
+				// Resolve symlink — if it points to a directory, recurse into it
+				resolvedPath, err := filepath.EvalSymlinks(fullPath)
+				if err != nil {
+					errCount.Add(1)
+					parent.AddChild(model.NewBrokenSymlinkNode(name, parent))
 					filesScanned.Add(1)
 					continue
 				}
-				inodeMap[ik] = struct{}{}
-				inodeMu.Unlock()
-			}
-
-			fileNode := &model.FileNode{
-				Name:   name,
-				Size:   info.Size(),
-				Usage:  si.diskUsage,
-				Mtime:  info.ModTime(),
-				Inode:  si.inode,
-				Flag:   flag,
-				Parent: parent,
-			}
-			parent.AddChild(fileNode)
-			filesScanned.Add(1)
-			bytesFound.Add(info.Size())
-		} else {
-			var flag model.NodeFlag
-			if mode&os.ModeSymlink != 0 {
-				flag = model.FlagSymlink
-			}
-
-			si := getStatInfo(info)
-
-			// Hardlink detection (also dedup when following symlinks to avoid double-counting)
-			if si.ok && (si.nlink > 1 || opts.FollowSymlinks) {
-				inodeMu.Lock()
-				ik := inodeKey{dev: si.dev, ino: si.inode}
-				if _, seen := inodeMap[ik]; seen {
-					flag |= model.FlagHardlink
-					inodeMu.Unlock()
-					// Still add the node but don't count size twice
-					fileNode := &model.FileNode{
-						Name:   name,
-						Size:   0,
-						Usage:  0,
-						Mtime:  info.ModTime(),
-						Inode:  si.inode,
-						Flag:   flag,
-						Parent: parent,
-					}
-					parent.AddChild(fileNode)
+				targetInfo, err := os.Stat(resolvedPath)
+				if err != nil {
+					errCount.Add(1)
+					parent.AddChild(model.NewBrokenSymlinkNode(name, parent))
 					filesScanned.Add(1)
 					continue
 				}
-				inodeMap[ik] = struct{}{}
-				inodeMu.Unlock()
-			}
+				if isSpecialMode(targetInfo.Mode()) {
+					continue
+				}
+				if targetInfo.IsDir() {
+					childDir := &model.DirNode{
+						FileNode: model.FileNode{
+							Name:   name,
+							Mtime:  targetInfo.ModTime(),
+							Flag:   model.FlagSymlink,
+							Parent: parent,
+						},
+					}
+					parent.AddChild(childDir)
 
-			fileNode := &model.FileNode{
-				Name:   name,
-				Size:   info.Size(),
-				Usage:  si.diskUsage,
-				Mtime:  info.ModTime(),
-				Inode:  si.inode,
-				Flag:   flag,
-				Parent: parent,
-			}
+					// Avoid duplicate traversal for symlinks pointing inside the scan root.
+					// The canonical in-tree directory will be scanned via normal traversal.
+					if isWithin(scanRoot, resolvedPath) {
+						continue
+					}
 
-			parent.AddChild(fileNode)
-			filesScanned.Add(1)
-			bytesFound.Add(info.Size())
+					// If target was already scanned, don't recurse again.
+					if _, loaded := visitedDirs.LoadOrStore(resolvedPath, true); loaded {
+						continue
+					}
+
+					spawnScan(resolvedPath, childDir)
+					continue
+				}
+				// Symlink to file — fall through to file handling below
+				info := targetInfo
+
+				flag := model.FlagSymlink
+				si := getStatInfo(info)
+
+				if si.ok {
+					// Dedup: symlink target may alias a regular file (even with Nlink==1)
+					inodeMu.Lock()
+					ik := inodeKey{dev: si.dev, ino: si.inode}
+					if _, seen := inodeMap[ik]; seen {
+						flag |= model.FlagHardlink
+						inodeMu.Unlock()
+						fileNode := &model.FileNode{
+							Name:   name,
+							Size:   0,
+							Usage:  0,
+							Mtime:  info.ModTime(),
+							Inode:  si.inode,
+							Flag:   flag,
+							Parent: parent,
+						}
+						parent.AddChild(fileNode)
+						filesScanned.Add(1)
+						continue
+					}
+					inodeMap[ik] = struct{}{}
+					inodeMu.Unlock()
+				}
+
+				fileNode := &model.FileNode{
+					Name:   name,
+					Size:   info.Size(),
+					Usage:  si.diskUsage,
+					Mtime:  info.ModTime(),
+					Inode:  si.inode,
+					Flag:   flag,
+					Parent: parent,
+				}
+				parent.AddChild(fileNode)
+				filesScanned.Add(1)
+				bytesFound.Add(info.Size())
+			} else {
+				var flag model.NodeFlag
+				if mode&os.ModeSymlink != 0 {
+					flag = model.FlagSymlink
+				}
+
+				si := getStatInfo(info)
+
+				// Hardlink detection (also dedup when following symlinks to avoid double-counting)
+				if si.ok && (si.nlink > 1 || opts.FollowSymlinks) {
+					inodeMu.Lock()
+					ik := inodeKey{dev: si.dev, ino: si.inode}
+					if _, seen := inodeMap[ik]; seen {
+						flag |= model.FlagHardlink
+						inodeMu.Unlock()
+						// Still add the node but don't count size twice
+						fileNode := &model.FileNode{
+							Name:   name,
+							Size:   0,
+							Usage:  0,
+							Mtime:  info.ModTime(),
+							Inode:  si.inode,
+							Flag:   flag,
+							Parent: parent,
+						}
+						parent.AddChild(fileNode)
+						filesScanned.Add(1)
+						continue
+					}
+					inodeMap[ik] = struct{}{}
+					inodeMu.Unlock()
+				}
+
+				fileNode := &model.FileNode{
+					Name:   name,
+					Size:   info.Size(),
+					Usage:  si.diskUsage,
+					Mtime:  info.ModTime(),
+					Inode:  si.inode,
+					Flag:   flag,
+					Parent: parent,
+				}
+
+				parent.AddChild(fileNode)
+				filesScanned.Add(1)
+				bytesFound.Add(info.Size())
+			}
+		}
+
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			parent.Flag |= model.FlagError
+			errCount.Add(1)
+			return
 		}
 	}
 }

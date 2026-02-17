@@ -2,7 +2,6 @@ package ops
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 )
@@ -11,7 +10,7 @@ import (
 // For directories, it removes the entire subtree.
 // rootPath constrains deletion to descendants of the scan root.
 //
-// Symlinks themselves are safe to delete (os.Remove removes the link, not the target).
+// Symlinks themselves are safe to delete.
 // However, paths that traverse through a symlinked directory are blocked to prevent
 // deleting files outside the scan root.
 func Delete(path string, rootPath string) error {
@@ -43,13 +42,8 @@ func Delete(path string, rootPath string) error {
 		return fmt.Errorf("refusing to delete %s: outside scan root %s", absPath, absRoot)
 	}
 
-	info, err := os.Lstat(realPath)
-	if err != nil {
-		return fmt.Errorf("cannot access %s: %w", realPath, err)
+	if err := deleteResolvedPath(realParent, filepath.Base(absPath)); err != nil {
+		return fmt.Errorf("cannot delete %s: %w", realPath, err)
 	}
-
-	if info.IsDir() {
-		return os.RemoveAll(realPath)
-	}
-	return os.Remove(realPath)
+	return nil
 }

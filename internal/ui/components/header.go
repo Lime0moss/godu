@@ -23,9 +23,14 @@ func RenderHeader(theme style.Theme, root *model.DirNode, useApparent bool, widt
 	if !useApparent {
 		size = root.GetUsage()
 	}
-	stats := fmt.Sprintf("%s items  %s ",
+	sizeSuffix := ""
+	if !useApparent && root.GetFlag()&model.FlagUsageEstimated != 0 {
+		sizeSuffix = "~"
+	}
+	stats := fmt.Sprintf("%s items  %s%s ",
 		util.FormatCount(root.ItemCount),
 		util.FormatSize(size),
+		sizeSuffix,
 	)
 	statsStyled := lipgloss.NewStyle().Foreground(theme.TextMuted).Render(stats)
 

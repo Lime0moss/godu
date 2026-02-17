@@ -37,8 +37,9 @@ const (
 
 // ScanDoneMsg is sent when scanning completes.
 type ScanDoneMsg struct {
-	Root *model.DirNode
-	Err  error
+	Root           *model.DirNode
+	Err            error
+	IncludedHidden bool
 }
 
 // ProgressMsg carries scanner progress updates.
@@ -86,12 +87,15 @@ type App struct {
 	useApparent bool
 	showHidden  bool
 	imported    bool
+	// scanIncludedHidden tracks whether hidden entries were included in the
+	// currently loaded tree data (scan/import result), independent of UI filter.
+	scanIncludedHidden bool
 
 	displayProgress  scanner.Progress
 	progressMu       sync.Mutex
 	incomingProgress scanner.Progress
-	scanCancel     context.CancelFunc
-	scanCancelMu   sync.Mutex
+	scanCancel       context.CancelFunc
+	scanCancelMu     sync.Mutex
 
 	theme  style.Theme
 	keys   KeyMap
@@ -118,32 +122,34 @@ func (a *App) callScanCancel() {
 // NewApp creates a new App model.
 func NewApp(scanPath string, opts scanner.ScanOptions) *App {
 	return &App{
-		ScanPath:    scanPath,
-		ScanOptions: opts,
-		state:       StateScanning,
-		viewMode:    ViewTree,
-		sortConfig:  model.DefaultSort(),
-		marked:      make(map[string]bool),
-		useApparent: false,
-		showHidden:  opts.ShowHidden,
-		theme:       style.DefaultTheme(),
-		keys:        DefaultKeyMap(),
+		ScanPath:           scanPath,
+		ScanOptions:        opts,
+		state:              StateScanning,
+		viewMode:           ViewTree,
+		sortConfig:         model.DefaultSort(),
+		marked:             make(map[string]bool),
+		useApparent:        false,
+		showHidden:         opts.ShowHidden,
+		scanIncludedHidden: opts.ShowHidden,
+		theme:              style.DefaultTheme(),
+		keys:               DefaultKeyMap(),
 	}
 }
 
 // NewAppFromImport creates an App that loads from a JSON file.
 func NewAppFromImport(importPath string) *App {
 	return &App{
-		ImportPath:  importPath,
-		state:       StateScanning,
-		viewMode:    ViewTree,
-		sortConfig:  model.DefaultSort(),
-		marked:      make(map[string]bool),
-		useApparent: false,
-		showHidden:  true,
-		imported:    true,
-		theme:       style.DefaultTheme(),
-		keys:        DefaultKeyMap(),
+		ImportPath:         importPath,
+		state:              StateScanning,
+		viewMode:           ViewTree,
+		sortConfig:         model.DefaultSort(),
+		marked:             make(map[string]bool),
+		useApparent:        false,
+		showHidden:         true,
+		imported:           true,
+		scanIncludedHidden: true,
+		theme:              style.DefaultTheme(),
+		keys:               DefaultKeyMap(),
 	}
 }
 
@@ -169,6 +175,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, tea.Quit
 		}
 		a.fatalErr = nil
+		a.scanIncludedHidden = msg.IncludedHidden
 		a.root = msg.Root
 		a.currentDir = msg.Root
 		a.navStack = nil
@@ -314,6 +321,15 @@ func (a *App) handleBrowsingKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, a.keys.ToggleHidden):
 		a.showHidden = !a.showHidden
 		a.clearMarks()
+		a.ScanOptions.ShowHidden = a.showHidden
+		if a.showHidden && !a.scanIncludedHidden {
+			if a.imported {
+				a.statusMsg = "Hidden files are not present in imported data"
+				a.refreshSorted()
+				return a, nil
+			}
+			return a, a.startRescan()
+		}
 		a.refreshSorted()
 
 	case key.Matches(msg, a.keys.Mark):
@@ -334,13 +350,12 @@ func (a *App) handleBrowsingKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a, a.exportCmd()
 
 	case key.Matches(msg, a.keys.Rescan):
+		if a.imported {
+			a.statusMsg = "Rescan is disabled in import mode"
+			return a, nil
+		}
 		a.clearMarks()
-		components.InvalidateFileTypeCache()
-		a.navStack = nil
-		a.cursor = 0
-		a.offset = 0
-		a.state = StateScanning
-		return a, tea.Batch(tea.ClearScreen, a.scanCmd(), a.tickCmd())
+		return a, a.startRescan()
 	}
 
 	return a, nil
@@ -398,14 +413,15 @@ func (a *App) renderBrowsing() string {
 	}
 
 	statusInfo := components.StatusInfo{
-		CurrentDir:  a.currentDir,
-		ItemCount:   len(a.sortedItems),
-		MarkedCount: len(a.marked),
-		UseApparent: a.useApparent,
-		ShowHidden:  a.showHidden,
-		SortField:   a.sortConfig.Field,
-		ViewMode:    int(a.viewMode),
-		ErrorMsg:    a.statusMsg,
+		CurrentDir:     a.currentDir,
+		ItemCount:      len(a.sortedItems),
+		MarkedCount:    len(a.marked),
+		UsageEstimated: a.root != nil && (a.root.GetFlag()&model.FlagUsageEstimated != 0),
+		UseApparent:    a.useApparent,
+		ShowHidden:     a.showHidden,
+		SortField:      a.sortConfig.Field,
+		ViewMode:       int(a.viewMode),
+		ErrorMsg:       a.statusMsg,
 	}
 	statusInfo.MarkedSize = a.markedSize(a.sortedItems)
 	statusBar := components.RenderStatusBar(a.theme, statusInfo, a.width)
@@ -528,7 +544,9 @@ func (a *App) getParentSize() int64 {
 // Progress is communicated via a.incomingProgress (mutex-protected).
 func (a *App) scanCmd() tea.Cmd {
 	return func() tea.Msg {
+		opts := a.ScanOptions
 		ctx, cancel := context.WithCancel(context.Background())
+		defer a.setScanCancel(nil)
 		a.setScanCancel(cancel)
 
 		progressCh := make(chan scanner.Progress, 10)
@@ -543,17 +561,17 @@ func (a *App) scanCmd() tea.Cmd {
 		}()
 
 		s := scanner.NewParallelScanner()
-		root, err := s.Scan(ctx, a.ScanPath, a.ScanOptions, progressCh)
+		root, err := s.Scan(ctx, a.ScanPath, opts, progressCh)
 		close(progressCh)
 
-		return ScanDoneMsg{Root: root, Err: err}
+		return ScanDoneMsg{Root: root, Err: err, IncludedHidden: opts.ShowHidden}
 	}
 }
 
 func (a *App) importCmd() tea.Cmd {
 	return func() tea.Msg {
 		root, err := ops.ImportJSON(a.ImportPath)
-		return ScanDoneMsg{Root: root, Err: err}
+		return ScanDoneMsg{Root: root, Err: err, IncludedHidden: true}
 	}
 }
 
@@ -662,4 +680,17 @@ func (a *App) exportCmd() tea.Cmd {
 		err := ops.ExportJSON(root, exportPath, version)
 		return ExportDoneMsg{Path: exportPath, Err: err}
 	}
+}
+
+func (a *App) startRescan() tea.Cmd {
+	components.InvalidateFileTypeCache()
+	a.navStack = nil
+	a.cursor = 0
+	a.offset = 0
+	a.state = StateScanning
+	a.displayProgress = scanner.Progress{}
+	a.progressMu.Lock()
+	a.incomingProgress = scanner.Progress{}
+	a.progressMu.Unlock()
+	return tea.Batch(tea.ClearScreen, a.scanCmd(), a.tickCmd())
 }

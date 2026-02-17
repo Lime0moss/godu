@@ -112,6 +112,9 @@ func parseDir(data json.RawMessage, parent *model.DirNode, depth int) (*model.Di
 	if entry.Symlink {
 		dirFlag |= model.FlagSymlink
 	}
+	if entry.UsageEstimated {
+		dirFlag |= model.FlagUsageEstimated
+	}
 	if err := validateSizeField("directory asize", entry.Asize); err != nil {
 		return nil, err
 	}
@@ -167,6 +170,9 @@ func parseDir(data json.RawMessage, parent *model.DirNode, depth int) (*model.Di
 			}
 			if fileEntry.Symlink {
 				flag |= model.FlagSymlink
+			}
+			if fileEntry.UsageEstimated {
+				flag |= model.FlagUsageEstimated
 			}
 			if err := validateSizeField("file asize", fileEntry.Asize); err != nil {
 				return nil, err

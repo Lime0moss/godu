@@ -21,7 +21,8 @@ import (
 
 const defaultRemotePath = "."
 
-const remoteBlockSize int64 = 4096
+const defaultRemoteBlockSize int64 = 4096
+const maxInt64 = int64(^uint64(0) >> 1)
 
 // Config configures a remote SFTP scan.
 type Config struct {
@@ -105,6 +106,7 @@ func (s *SFTPScanner) scanWithClient(ctx context.Context, client sftpClient, rem
 		FileNode: model.FileNode{
 			Name:  rootPath,
 			Mtime: info.ModTime(),
+			Flag:  model.FlagUsageEstimated,
 		},
 	}
 
@@ -151,16 +153,20 @@ func (s *SFTPScanner) scanWithClient(ctx context.Context, client sftpClient, rem
 		concurrency = runtime.GOMAXPROCS(0) * 3
 	}
 	sem := make(chan struct{}, concurrency)
+	blockSize := remoteBlockSize(client, rootPath)
 
 	var visitedDirs sync.Map
 	visitedDirs.Store(rootPath, true)
 	var seenFiles sync.Map
 
 	var wg sync.WaitGroup
-	s.scanDir(ctx, client, rootPath, rootPath, root, opts, sem, &wg, &filesScanned, &dirsScanned, &bytesFound, &errCount, excludeSet, &visitedDirs, &seenFiles)
+	s.scanDir(ctx, client, rootPath, rootPath, root, opts, sem, &wg, &filesScanned, &dirsScanned, &bytesFound, &errCount, excludeSet, &visitedDirs, &seenFiles, blockSize)
 	wg.Wait()
 
-	root.UpdateSizeRecursive()
+	if err := ctx.Err(); err != nil {
+		return root, err
+	}
+	root.UpdateSizeRecursiveContext(ctx)
 
 	if progress != nil {
 		close(progressDone)
@@ -199,6 +205,7 @@ func (s *SFTPScanner) scanDir(
 	excludeSet map[string]struct{},
 	visitedDirs *sync.Map,
 	seenFiles *sync.Map,
+	blockSize int64,
 ) {
 	select {
 	case <-ctx.Done():
@@ -206,7 +213,7 @@ func (s *SFTPScanner) scanDir(
 	default:
 	}
 
-	entries, err := client.ReadDir(dirPath)
+	entries, err := readRemoteDir(ctx, client, dirPath)
 	if err != nil {
 		parent.Flag |= model.FlagError
 		errCount.Add(1)
@@ -222,10 +229,10 @@ func (s *SFTPScanner) scanDir(
 			go func(p string, d *model.DirNode) {
 				defer wg.Done()
 				defer func() { <-sem }()
-				s.scanDir(ctx, client, scanRoot, p, d, opts, sem, wg, filesScanned, dirsScanned, bytesFound, errCount, excludeSet, visitedDirs, seenFiles)
+				s.scanDir(ctx, client, scanRoot, p, d, opts, sem, wg, filesScanned, dirsScanned, bytesFound, errCount, excludeSet, visitedDirs, seenFiles, blockSize)
 			}(path, dir)
 		default:
-			s.scanDir(ctx, client, scanRoot, path, dir, opts, sem, wg, filesScanned, dirsScanned, bytesFound, errCount, excludeSet, visitedDirs, seenFiles)
+			s.scanDir(ctx, client, scanRoot, path, dir, opts, sem, wg, filesScanned, dirsScanned, bytesFound, errCount, excludeSet, visitedDirs, seenFiles, blockSize)
 		}
 	}
 
@@ -297,7 +304,7 @@ func (s *SFTPScanner) scanDir(
 				fileNode := &model.FileNode{
 					Name:   name,
 					Size:   size,
-					Usage:  estimateDiskUsage(size),
+					Usage:  estimateDiskUsage(size, blockSize),
 					Mtime:  targetInfo.ModTime(),
 					Flag:   flag,
 					Parent: parent,
@@ -312,7 +319,7 @@ func (s *SFTPScanner) scanDir(
 			fileNode := &model.FileNode{
 				Name:   name,
 				Size:   size,
-				Usage:  estimateDiskUsage(size),
+				Usage:  estimateDiskUsage(size, blockSize),
 				Mtime:  entry.ModTime(),
 				Flag:   model.FlagSymlink,
 				Parent: parent,
@@ -360,7 +367,7 @@ func (s *SFTPScanner) scanDir(
 		fileNode := &model.FileNode{
 			Name:   name,
 			Size:   size,
-			Usage:  estimateDiskUsage(size),
+			Usage:  estimateDiskUsage(size, blockSize),
 			Mtime:  entry.ModTime(),
 			Flag:   flag,
 			Parent: parent,
@@ -407,12 +414,37 @@ func cleanRemotePath(p string) string {
 	return clean
 }
 
-func estimateDiskUsage(size int64) int64 {
+func estimateDiskUsage(size, blockSize int64) int64 {
 	if size <= 0 {
 		return 0
 	}
-	blocks := (size + remoteBlockSize - 1) / remoteBlockSize
-	return blocks * remoteBlockSize
+	if blockSize <= 0 {
+		blockSize = defaultRemoteBlockSize
+	}
+	blocks := (size + blockSize - 1) / blockSize
+	return blocks * blockSize
+}
+
+func remoteBlockSize(client sftpClient, rootPath string) int64 {
+	vfsClient, ok := client.(interface {
+		StatVFS(path string) (*sftp.StatVFS, error)
+	})
+	if !ok {
+		return defaultRemoteBlockSize
+	}
+
+	stat, err := vfsClient.StatVFS(rootPath)
+	if err != nil || stat == nil {
+		return defaultRemoteBlockSize
+	}
+
+	if stat.Frsize > 0 && stat.Frsize <= uint64(maxInt64) {
+		return int64(stat.Frsize)
+	}
+	if stat.Bsize > 0 && stat.Bsize <= uint64(maxInt64) {
+		return int64(stat.Bsize)
+	}
+	return defaultRemoteBlockSize
 }
 
 func isHidden(name string) bool {
@@ -435,6 +467,15 @@ func isWithinRemote(root, target string) bool {
 
 func isSpecialRemoteMode(mode os.FileMode) bool {
 	return mode&(os.ModeDevice|os.ModeCharDevice|os.ModeSocket|os.ModeNamedPipe|os.ModeIrregular) != 0
+}
+
+func readRemoteDir(ctx context.Context, client sftpClient, dirPath string) ([]os.FileInfo, error) {
+	if rc, ok := client.(interface {
+		ReadDirContext(context.Context, string) ([]os.FileInfo, error)
+	}); ok {
+		return rc.ReadDirContext(ctx, dirPath)
+	}
+	return client.ReadDir(dirPath)
 }
 
 func dialSFTP(ctx context.Context, cfg Config) (sftpClient, io.Closer, error) {

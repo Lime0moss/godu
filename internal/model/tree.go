@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"path/filepath"
 	"sync"
 	"time"
@@ -19,6 +20,8 @@ const (
 	FlagSymlink NodeFlag = 1 << iota
 	FlagError
 	FlagHardlink
+	// FlagUsageEstimated marks nodes whose disk usage is estimated (not exact).
+	FlagUsageEstimated
 )
 
 // FileNode represents a single file in the tree.
@@ -169,9 +172,30 @@ func NewBrokenSymlinkNode(name string, parent *DirNode) *FileNode {
 // Children are updated before parents, ensuring correct totals.
 // Must be called only after all concurrent writes are complete.
 func (d *DirNode) UpdateSizeRecursive() {
+	d.UpdateSizeRecursiveContext(context.Background())
+}
+
+// UpdateSizeRecursiveContext performs a bottom-up size calculation and stops
+// early if the context is canceled.
+func (d *DirNode) UpdateSizeRecursiveContext(ctx context.Context) {
+	if ctx != nil {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+	}
+
 	for _, child := range d.Children {
 		if cd, ok := child.(*DirNode); ok {
-			cd.UpdateSizeRecursive()
+			cd.UpdateSizeRecursiveContext(ctx)
+			if ctx != nil {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
+			}
 		}
 	}
 	d.UpdateSize()

@@ -2,6 +2,10 @@ package remote
 
 import (
 	"bufio"
+	"crypto/hmac"
+	"crypto/sha1"
+	"crypto/subtle"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -157,11 +161,20 @@ func knownHostAddress(host string, port int) string {
 }
 
 func knownHostCandidates(host string, port int) map[string]bool {
-	candidates := map[string]bool{
-		fmt.Sprintf("[%s]:%d", host, port): true,
+	candidates := make(map[string]bool, 4)
+	add := func(address string) {
+		if address == "" {
+			return
+		}
+		candidates[address] = true
+		if normalized := knownhosts.Normalize(address); normalized != "" {
+			candidates[normalized] = true
+		}
 	}
+
+	add(fmt.Sprintf("[%s]:%d", host, port))
 	if port == 22 {
-		candidates[host] = true
+		add(host)
 	}
 	return candidates
 }
@@ -321,20 +334,57 @@ func removeKnownHostEntries(data []byte, host string, port int) []byte {
 		}
 
 		hostField := fields[hostFieldIdx]
-		drop := false
-		for _, h := range strings.Split(hostField, ",") {
-			if candidates[h] {
-				drop = true
-				break
-			}
-		}
-		if drop {
+		if hostFieldMatchesCandidates(hostField, candidates) {
 			continue
 		}
 		keep = append(keep, line)
 	}
 
 	return []byte(strings.Join(keep, "\n"))
+}
+
+func hostFieldMatchesCandidates(hostField string, candidates map[string]bool) bool {
+	for _, raw := range strings.Split(hostField, ",") {
+		pattern := strings.TrimSpace(raw)
+		if pattern == "" {
+			continue
+		}
+		if candidates[pattern] {
+			return true
+		}
+		if strings.HasPrefix(pattern, "|1|") {
+			for candidate := range candidates {
+				if matchesHashedHostPattern(pattern, candidate) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// matchesHashedHostPattern checks whether a known_hosts |1|... token matches
+// the provided address (e.g. "example.com" or "[example.com]:2222").
+func matchesHashedHostPattern(token, address string) bool {
+	parts := strings.Split(token, "|")
+	// Expected format: |1|base64(salt)|base64(hmac-sha1)
+	if len(parts) != 4 || parts[0] != "" || parts[1] != "1" {
+		return false
+	}
+
+	salt, err := base64.StdEncoding.DecodeString(parts[2])
+	if err != nil {
+		return false
+	}
+	want, err := base64.StdEncoding.DecodeString(parts[3])
+	if err != nil {
+		return false
+	}
+
+	mac := hmac.New(sha1.New, salt)
+	_, _ = mac.Write([]byte(address))
+	got := mac.Sum(nil)
+	return subtle.ConstantTimeCompare(got, want) == 1
 }
 
 func promptYesNo(prompt string) (bool, error) {
